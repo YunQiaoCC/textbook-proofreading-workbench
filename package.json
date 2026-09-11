@@ -7,8 +7,10 @@
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
+    "server": "node server/app.mjs",
     "inspect:pdf": "node scripts/inspect-pdf.mjs",
-    "test:inspect-pdf": "node scripts/test-inspect-pdf.mjs"
+    "test:inspect-pdf": "node scripts/test-inspect-pdf.mjs",
+    "test:ingestion": "node scripts/test-ingestion.mjs"
   },
   "dependencies": {
     "inklayer-vue": "^1.0.4",

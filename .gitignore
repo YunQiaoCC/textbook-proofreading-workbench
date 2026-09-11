@@ -15,6 +15,9 @@ dist-ssr
 .env.*
 !.env.example
 
+# Private local document storage. Original PDFs and metadata never belong in Git.
+storage/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

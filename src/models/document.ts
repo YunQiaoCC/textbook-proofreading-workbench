@@ -7,6 +7,7 @@
 
 export type DocumentProcessingStatus =
   | 'registered'
+  | 'uploaded'
   | 'inspecting'
   | 'ready'
   | 'processing'
@@ -50,6 +51,15 @@ export interface DerivedDocumentAsset extends DocumentAssetBase {
 
 export type DocumentAsset = OriginalPdfAsset | DerivedDocumentAsset
 
+export interface DocumentInspectionSummary {
+  pageCount: number
+  pagesWithText: number | null
+  pagesWithoutText: number | null
+  scannedPageRatio: number | null
+  warningCount: number
+  inspectedAt: string
+}
+
 export interface Document {
   id: string
   title: string
@@ -58,6 +68,7 @@ export interface Document {
   processingStatus: DocumentProcessingStatus
   createdAt: string
   updatedAt: string
+  inspectionSummary?: DocumentInspectionSummary
 }
 
 export interface Page {
