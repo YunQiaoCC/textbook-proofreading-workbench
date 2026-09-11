@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "inspect:pdf": "node scripts/inspect-pdf.mjs",
+    "test:inspect-pdf": "node scripts/test-inspect-pdf.mjs"
   },
   "dependencies": {
     "inklayer-vue": "^1.0.4",
