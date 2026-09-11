@@ -1,17 +1,36 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted } from 'vue'
 import { PdfAnnotator, type Annotation } from 'inklayer-vue'
 import 'inklayer-vue/style'
 
+import DocumentUploader from './components/DocumentUploader.vue'
 import DocumentOutline from './components/DocumentOutline.vue'
 import IssueEditor from './components/IssueEditor.vue'
 import IssueList from './components/IssueList.vue'
 import InkLayerActions from './components/InkLayerActions.vue'
+import { documentFileUrl } from './services/documentApi'
+import { useDocumentWorkspace } from './features/documents/useDocumentWorkspace'
 import { useProofreadingWorkspace } from './features/proofreading/useProofreadingWorkspace'
 
-const pdfUrl = 'https://inklayer.dev/inklayer-demo.pdf'
 const currentUser = { id: 'proofreader-demo', name: '校对员' }
-const activeChapter = ref('chapter-1')
+const documentStatusLabels = {
+  uploaded: '已上传',
+  inspecting: '检查中',
+  ready: '可校对',
+  failed: '检查失败',
+  registered: '已登记',
+  processing: '处理中',
+} as const
+
+const {
+  documents,
+  selectedDocumentId,
+  selectedDocument,
+  loading,
+  error,
+  loadDocuments,
+  selectDocument,
+} = useDocumentWorkspace()
 
 const {
   annotations,
@@ -29,7 +48,26 @@ const {
   handleAnnotationUpdated,
   handleSave,
   exportIssues,
-} = useProofreadingWorkspace(currentUser.name)
+} = useProofreadingWorkspace(currentUser.name, selectedDocumentId)
+
+const pdfUrl = computed(() => selectedDocument.value ? documentFileUrl(selectedDocument.value.id) : '')
+const selectedDocumentStatus = computed(() => {
+  const status = selectedDocument.value?.processingStatus
+  return status ? documentStatusLabels[status] : ''
+})
+const documentContext = computed(() => selectedDocument.value
+  ? `${selectedDocument.value.pageCount} 页 · ${selectedDocumentStatus.value}`
+  : '选择或上传一份教材')
+
+onMounted(() => { void loadDocuments() })
+
+function onDocumentSelected(documentId: string) {
+  void selectDocument(documentId)
+}
+
+function onDocumentUploaded(documentId: string) {
+  void loadDocuments(documentId)
+}
 
 function onAnnotationSelected(annotation: Annotation | null) {
   handleAnnotationSelected(annotation)
@@ -49,9 +87,9 @@ function onAnnotationSelected(annotation: Annotation | null) {
 
       <div class="document-context">
         <span class="context-eyebrow">当前文档</span>
-        <strong>民法学教程（总论）</strong>
+        <strong>{{ selectedDocument?.title ?? '尚未上传教材' }}</strong>
         <span class="context-divider">/</span>
-        <span>第一章 法律制度导论</span>
+        <span>{{ documentContext }}</span>
       </div>
 
       <div class="header-actions">
@@ -59,7 +97,7 @@ function onAnnotationSelected(annotation: Annotation | null) {
           <span class="save-dot" />
           {{ lastSavedAt ? `已保存 ${lastSavedAt}` : '本地自动保存' }}
         </span>
-        <button class="header-button" type="button" @click="exportIssues">
+        <button class="header-button" type="button" :disabled="!selectedDocument" @click="exportIssues">
           <span aria-hidden="true">↥</span>
           导出校对表
         </button>
@@ -67,16 +105,25 @@ function onAnnotationSelected(annotation: Annotation | null) {
       </div>
     </header>
 
-    <div class="workspace-grid">
-      <DocumentOutline v-model:active-chapter="activeChapter" />
+      <div class="workspace-grid">
+      <div class="outline-column">
+        <DocumentUploader @completed="onDocumentUploaded" />
+        <DocumentOutline
+          :documents="documents"
+          :selected-document-id="selectedDocumentId"
+          :loading="loading"
+          :error="error"
+          @select="onDocumentSelected"
+        />
+      </div>
 
       <section class="reader-panel" aria-label="PDF 阅读器">
         <div class="reader-toolbar">
           <div class="reader-title">
             <span class="reader-file-icon">PDF</span>
             <div>
-              <strong>民法学教程（总论）</strong>
-              <span>教材校对稿 · v0.1</span>
+              <strong>{{ selectedDocument?.title ?? '尚未上传教材' }}</strong>
+              <span>{{ selectedDocument ? `${selectedDocument.pageCount} 页 · ${selectedDocumentStatus}` : '上传 PDF 后开始校对' }}</span>
             </div>
           </div>
           <div class="reader-hint">
@@ -87,6 +134,8 @@ function onAnnotationSelected(annotation: Annotation | null) {
 
         <div class="inklayer-frame">
           <PdfAnnotator
+            v-if="selectedDocument && selectedDocument.processingStatus !== 'failed'"
+            :key="selectedDocument.id"
             :url="pdfUrl"
             :user="currentUser"
             locale="zh-CN"
@@ -103,21 +152,33 @@ function onAnnotationSelected(annotation: Annotation | null) {
             @annotation-selected="onAnnotationSelected"
             @annotation-updated="handleAnnotationUpdated"
           />
+          <div v-else class="reader-empty">
+            <div class="reader-empty-icon">PDF</div>
+            <strong>{{ selectedDocument?.processingStatus === 'failed' ? 'PDF 检查失败' : '选择或上传一份教材' }}</strong>
+            <span>{{ selectedDocument?.processingStatus === 'failed' ? '请检查文件后重试' : documents.length ? '从左侧选择一份教材' : '尚未上传教材' }}</span>
+          </div>
         </div>
       </section>
 
       <aside class="review-panel" aria-label="校对意见">
-        <IssueList
-          :issues="issues"
-          :selected-issue-id="selectedIssueId"
-          @select="selectIssue"
-          @create="addManualIssue"
-        />
-        <IssueEditor
-          :issue="selectedIssue"
-          @update="updateIssue"
-          @status="updateIssueStatus"
-        />
+        <template v-if="selectedDocument">
+          <IssueList
+            :issues="issues"
+            :selected-issue-id="selectedIssueId"
+            @select="selectIssue"
+            @create="addManualIssue"
+          />
+          <IssueEditor
+            :issue="selectedIssue"
+            @update="updateIssue"
+            @status="updateIssueStatus"
+          />
+        </template>
+        <div v-else class="review-empty">
+          <div class="reader-empty-icon">✎</div>
+          <strong>选择或上传一份教材</strong>
+          <span>文档选择后，校对意见会按文档分别保存</span>
+        </div>
       </aside>
     </div>
   </main>
@@ -182,6 +243,8 @@ button { cursor: pointer; }
 .user-avatar { display: grid; width: 28px; height: 28px; place-items: center; color: #172033; font-weight: 700; font-size: 11px; background: #e2c58f; border-radius: 50%; }
 
 .workspace-grid { display: grid; flex: 1; grid-template-columns: 220px minmax(480px, 1fr) 390px; min-height: 0; }
+.outline-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #f8f9fb; }
+.outline-column > .outline-panel { flex: 1; min-height: 0; }
 .reader-panel, .review-panel { min-width: 0; min-height: 0; }
 .reader-panel { display: flex; flex-direction: column; padding: 15px 16px 16px; background: #e9edf3; }
 .reader-toolbar { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: 0 4px 11px; }
@@ -190,15 +253,19 @@ button { cursor: pointer; }
 .reader-title strong, .reader-title span { display: block; }
 .reader-title strong { overflow: hidden; color: #263149; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .reader-title div span { margin-top: 3px; color: #8a94a7; font-size: 10px; }
+.header-button:disabled { cursor: not-allowed; opacity: .55; }
 .reader-hint { display: flex; align-items: center; gap: 6px; color: #7f8ba0; font-size: 10px; }
 .shortcut-key { display: inline-grid; width: 17px; height: 17px; place-items: center; color: #6d7890; font-size: 11px; background: #dce2ea; border: 1px solid #cbd3df; border-radius: 4px; }
 .inklayer-frame { flex: 1; min-height: 0; overflow: hidden; background: #cdd4df; border: 1px solid #c0c9d6; border-radius: 9px; box-shadow: 0 5px 16px rgba(31, 42, 61, 0.08); }
 .inklayer-frame > * { width: 100%; height: 100%; }
 .review-panel { display: flex; flex-direction: column; background: #fff; border-left: 1px solid #dce1e9; }
+.reader-empty, .review-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 100%; padding: 30px; color: #9da7b5; text-align: center; }
+.reader-empty strong, .review-empty strong { color: #6e7c91; font-size: 12px; }
+.reader-empty span, .review-empty span { max-width: 220px; font-size: 10px; line-height: 1.5; }
+.reader-empty-icon { display: grid; width: 42px; height: 42px; place-items: center; color: #7894b7; font-size: 11px; font-weight: 700; background: #eef4fb; border-radius: 50%; }
 
 @media (max-width: 1320px) {
   .workspace-grid { grid-template-columns: 200px minmax(440px, 1fr) 360px; }
   .reader-hint { display: none; }
 }
 </style>
-
