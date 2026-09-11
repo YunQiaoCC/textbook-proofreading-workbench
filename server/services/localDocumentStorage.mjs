@@ -98,8 +98,8 @@ export class LocalDocumentStorage {
     }
   }
 
-  read(asset) {
-    return openReadStream(this.resolveAbsolutePath(asset))
+  read(asset, options = {}) {
+    return openReadStream(this.resolveAbsolutePath(asset), options)
   }
 
   async exists(asset) {

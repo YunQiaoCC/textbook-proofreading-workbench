@@ -5,13 +5,17 @@ import { createServerConfig } from './config.mjs'
 import { FileBackedDocumentRepository } from './repositories/fileBackedDocumentRepository.mjs'
 import { LocalDocumentStorage } from './services/localDocumentStorage.mjs'
 import { PopplerInspectionService } from './services/popplerInspection.mjs'
+import { DocumentReadService } from './services/documentReadService.mjs'
 import { HttpError, UploadSessionService } from './services/uploadSessionService.mjs'
 
 const MAX_JSON_BODY = 64 * 1024
 
-function sendJson(response, statusCode, value) {
+function sendJson(response, statusCode, value, headers = {}) {
   const body = JSON.stringify(value)
   response.statusCode = statusCode
+  for (const [name, headerValue] of Object.entries(headers)) {
+    response.setHeader(name, headerValue)
+  }
   response.setHeader('content-type', 'application/json; charset=utf-8')
   response.setHeader('content-length', Buffer.byteLength(body))
   response.end(body)
@@ -63,6 +67,7 @@ function errorResponse(error) {
         message: error.message,
         ...(error.details ? { details: error.details } : {}),
       },
+      headers: error.headers,
     }
   }
   console.error(error)
@@ -72,8 +77,44 @@ function errorResponse(error) {
   }
 }
 
-async function handleRequest(request, response, uploadService) {
+async function handleRequest(request, response, uploadService, documentReadService) {
   const segments = routeSegments(request.url ?? '/')
+
+  if (segments.length === 2 && segments[0] === 'api' && segments[1] === 'documents') {
+    if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    sendJson(response, 200, await documentReadService.list())
+    return
+  }
+
+  if (segments.length === 3 && segments[0] === 'api' && segments[1] === 'documents') {
+    if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    sendJson(response, 200, await documentReadService.detail(segments[2]))
+    return
+  }
+
+  if (
+    segments.length === 4 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'pages'
+  ) {
+    if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    sendJson(response, 200, await documentReadService.pages(segments[2]))
+    return
+  }
+
+  if (
+    segments.length === 4 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'file'
+  ) {
+    if (!['GET', 'HEAD'].includes(request.method)) {
+      throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    }
+    await documentReadService.serveFile(segments[2], request, response)
+    return
+  }
 
   if (request.method === 'POST' && segments.length === 2 && segments[0] === 'api' && segments[1] === 'uploads') {
     const body = await readJsonBody(request)
@@ -119,6 +160,7 @@ export async function createIngestionServer(options = {}) {
   const config = createServerConfig(options)
   const documentStorage = new LocalDocumentStorage(config.storageRoot)
   const documentRepository = new FileBackedDocumentRepository(config.storageRoot)
+  const documentReadService = new DocumentReadService({ documentRepository, documentStorage })
   const inspectionService = new PopplerInspectionService({
     storageRoot: config.storageRoot,
     timeoutMs: config.inspectionTimeoutMs,
@@ -137,10 +179,10 @@ export async function createIngestionServer(options = {}) {
   await uploadService.init()
 
   const server = createHttpServer((request, response) => {
-    void handleRequest(request, response, uploadService).catch((error) => {
+    void handleRequest(request, response, uploadService, documentReadService).catch((error) => {
       if (!response.headersSent) {
         const result = errorResponse(error)
-        sendJson(response, result.statusCode, result.body)
+        sendJson(response, result.statusCode, result.body, result.headers)
       } else {
         response.destroy()
       }
@@ -158,6 +200,7 @@ export async function createIngestionServer(options = {}) {
     config,
     documentStorage,
     documentRepository,
+    documentReadService,
     uploadService,
     async close() {
       clearInterval(cleanupTimer)

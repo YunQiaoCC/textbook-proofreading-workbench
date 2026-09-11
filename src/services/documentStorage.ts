@@ -9,5 +9,8 @@ export interface OriginalPdfUpload {
 
 export interface DocumentStorage {
   storeOriginalPdf(input: OriginalPdfUpload): Promise<OriginalPdfAsset>
-  read(asset: DocumentAsset): Promise<AsyncIterable<Uint8Array>>
+  read(
+    asset: DocumentAsset,
+    options?: { start?: number; end?: number },
+  ): Promise<AsyncIterable<Uint8Array>>
 }

@@ -69,6 +69,20 @@ export class FileBackedDocumentRepository {
     return (await this.readRecord(documentId))?.document ?? null
   }
 
+  async listDocuments() {
+    const entries = await readdir(this.metadataRoot, { withFileTypes: true })
+    const documents = []
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+      const record = await readJson(path.join(this.metadataRoot, entry.name))
+      if (record.document) documents.push(record.document)
+    }
+    return documents.sort((left, right) => {
+      const byCreatedAt = String(left.createdAt ?? '').localeCompare(String(right.createdAt ?? ''))
+      return byCreatedAt || String(left.id).localeCompare(String(right.id))
+    })
+  }
+
   async listPages(documentId) {
     return (await this.readRecord(documentId))?.pages ?? []
   }
@@ -85,5 +99,10 @@ export class FileBackedDocumentRepository {
       if (record.asset?.id === assetId) return record.asset
     }
     return null
+  }
+
+  async getAssetForDocument(documentId, assetId) {
+    const record = await this.readRecord(documentId)
+    return record?.asset?.id === assetId ? record.asset : null
   }
 }

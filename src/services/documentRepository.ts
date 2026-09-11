@@ -7,10 +7,12 @@ import type {
 
 export interface DocumentRepository {
   getById(documentId: string): Promise<Document | null>
+  listDocuments(): Promise<readonly Document[]>
   save(document: Document): Promise<void>
   saveAsset(asset: DocumentAsset): Promise<void>
   savePages(documentId: string, pages: readonly Page[]): Promise<void>
   listPages(documentId: string): Promise<readonly Page[]>
   listChapters(documentId: string): Promise<readonly Chapter[]>
   getAsset(assetId: string): Promise<DocumentAsset | null>
+  getAssetForDocument(documentId: string, assetId: string): Promise<DocumentAsset | null>
 }

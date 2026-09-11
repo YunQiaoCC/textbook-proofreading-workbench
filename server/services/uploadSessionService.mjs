@@ -11,11 +11,12 @@ const SESSION_FILE = 'session.json'
 const SESSION_LIFETIME_MS = 24 * 60 * 60 * 1000
 
 export class HttpError extends Error {
-  constructor(statusCode, code, message, details) {
+  constructor(statusCode, code, message, details, headers) {
     super(message)
     this.statusCode = statusCode
     this.code = code
     this.details = details
+    this.headers = headers
   }
 }
 
