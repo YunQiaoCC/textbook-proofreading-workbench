@@ -361,7 +361,7 @@ export class UploadSessionService {
           title: session.originalFilename,
           originalAssetId: asset.id,
           pageCount: 0,
-          processingStatus: 'inspecting',
+          processingStatus: 'uploaded',
           createdAt: now,
           updatedAt: now,
         }
@@ -371,6 +371,13 @@ export class UploadSessionService {
         session.documentId = documentId
         await this.saveSession(session)
         await rm(this.partDirectory(uploadId), { recursive: true, force: true })
+
+        document = {
+          ...document,
+          processingStatus: 'inspecting',
+          updatedAt: this.now().toISOString(),
+        }
+        await this.documentRepository.saveBundle({ document, asset, pages: [], inspectionSummary: null })
 
         try {
           const report = await this.inspectionService.inspect(this.documentStorage.resolveAbsolutePath(asset))
