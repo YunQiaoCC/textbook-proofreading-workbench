@@ -214,12 +214,55 @@ async function main() {
     const conditionalRange = await bytesRequest(baseUrl, fileRoute, {
       headers: { range: 'bytes=0-9', 'if-none-match': etag },
     })
-    assert.equal(conditionalRange.response.status, 501)
+    assert.equal(conditionalRange.response.status, 304)
+    assert.equal(conditionalRange.bytes.length, 0)
+
+    const staleConditionalRange = await bytesRequest(baseUrl, fileRoute, {
+      headers: { range: 'bytes=0-9', 'if-none-match': '"stale-etag"' },
+    })
+    assert.equal(staleConditionalRange.response.status, 206)
+    assert.deepEqual(staleConditionalRange.bytes, pdf.subarray(0, 10))
 
     const ifRange = await bytesRequest(baseUrl, fileRoute, {
       headers: { range: 'bytes=0-9', 'if-range': etag },
     })
-    assert.equal(ifRange.response.status, 501)
+    assert.equal(ifRange.response.status, 206)
+    assert.deepEqual(ifRange.bytes, pdf.subarray(0, 10))
+
+    const staleIfRange = await bytesRequest(baseUrl, fileRoute, {
+      headers: { range: 'bytes=0-9', 'if-range': '"stale-etag"' },
+    })
+    assert.equal(staleIfRange.response.status, 200)
+    assert.deepEqual(staleIfRange.bytes, pdf)
+
+    const weakIfRange = await bytesRequest(baseUrl, fileRoute, {
+      headers: { range: 'bytes=0-9', 'if-range': `W/${etag}` },
+    })
+    assert.equal(weakIfRange.response.status, 200)
+    assert.deepEqual(weakIfRange.bytes, pdf)
+
+    const lastModified = full.response.headers.get('last-modified')
+    assert.ok(lastModified)
+    const matchingDateIfRange = await bytesRequest(baseUrl, fileRoute, {
+      headers: { range: 'bytes=0-9', 'if-range': lastModified },
+    })
+    assert.equal(matchingDateIfRange.response.status, 206)
+    assert.deepEqual(matchingDateIfRange.bytes, pdf.subarray(0, 10))
+
+    const staleDateIfRange = await bytesRequest(baseUrl, fileRoute, {
+      headers: {
+        range: 'bytes=0-9',
+        'if-range': new Date(Date.parse(lastModified) - 1000).toUTCString(),
+      },
+    })
+    assert.equal(staleDateIfRange.response.status, 200)
+    assert.deepEqual(staleDateIfRange.bytes, pdf)
+
+    const invalidIfRange = await bytesRequest(baseUrl, fileRoute, {
+      headers: { range: 'bytes=0-9', 'if-range': 'not-a-validator' },
+    })
+    assert.equal(invalidIfRange.response.status, 200)
+    assert.deepEqual(invalidIfRange.bytes, pdf)
 
     const unknown = await bytesRequest(baseUrl, '/api/documents/does-not-exist/file')
     assert.equal(unknown.response.status, 404)
@@ -242,8 +285,10 @@ async function main() {
     console.log('range-unsatisfiable=pass')
     console.log('range-malformed-and-multiple-rejected=pass')
     console.log('if-none-match-304=pass')
-    console.log('conditional-range-explicitly-unsupported=pass')
-    console.log('if-range-explicitly-unsupported=pass')
+    console.log('conditional-range-if-none-match=pass')
+    console.log('if-range-strong-etag=pass')
+    console.log('if-range-stale-fallback=pass')
+    console.log('if-range-http-date=pass')
     console.log('unknown-document-404=pass')
     console.log('path-traversal-contained=pass')
     console.log('pdfjs-http-url-page-count=pass')

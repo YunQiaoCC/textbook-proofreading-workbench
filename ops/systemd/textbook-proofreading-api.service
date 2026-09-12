@@ -1,0 +1,22 @@
+[Unit]
+Description=Textbook proofreading Node API
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/textbook-proofreading-workbench
+ExecStart=/usr/bin/node /home/ubuntu/textbook-proofreading-workbench/server/app.mjs
+Environment=NODE_ENV=production
+Environment=DOCUMENT_API_HOST=127.0.0.1
+Environment=DOCUMENT_API_PORT=8787
+Environment=DOCUMENT_STORAGE_ROOT=/home/ubuntu/textbook-proofreading-workbench/storage
+Restart=on-failure
+RestartSec=2
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

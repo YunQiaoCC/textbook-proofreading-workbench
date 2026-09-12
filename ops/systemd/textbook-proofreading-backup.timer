@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily textbook proofreading workbench backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=textbook-proofreading-backup.service
+
+[Install]
+WantedBy=timers.target

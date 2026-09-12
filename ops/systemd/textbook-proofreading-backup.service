@@ -1,0 +1,13 @@
+[Unit]
+Description=Backup textbook proofreading workbench data
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/textbook-proofreading-workbench
+ExecStart=/home/ubuntu/textbook-proofreading-workbench/ops/backup-workbench.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

@@ -123,6 +123,23 @@ function matchesIfNoneMatch(value, etag) {
   })
 }
 
+function matchesIfRange(value, etag, lastModifiedMs) {
+  if (typeof value !== 'string') return false
+  const validator = value.trim()
+
+  // If-Range only accepts a strong entity-tag. A weak tag or an invalid
+  // validator is deliberately treated as stale so the caller receives 200.
+  if (validator.startsWith('W/')) return false
+  if (validator.startsWith('"')) return validator === etag
+
+  const dateMs = Date.parse(validator)
+  if (!Number.isFinite(dateMs)) return false
+
+  // HTTP dates have one-second precision. Compare at that precision so the
+  // Last-Modified value emitted below has the same semantics as this check.
+  return Math.floor(lastModifiedMs / 1000) <= Math.floor(dateMs / 1000)
+}
+
 export class DocumentReadService {
   constructor({ documentRepository, documentStorage }) {
     this.documentRepository = documentRepository
@@ -197,21 +214,26 @@ export class DocumentReadService {
       'last-modified': fileStat.mtime.toUTCString(),
     }
 
+    // Evaluate If-None-Match before Range. A matching validator means the
+    // representation is already fresh, so the correct response is 304 even
+    // when the client also supplied a Range header.
+    if (matchesIfNoneMatch(request.headers['if-none-match'], etag)) {
+      response.writeHead(304, commonHeaders)
+      response.end()
+      return
+    }
+
     const rangeHeader = request.headers.range
-    if (rangeHeader !== undefined && request.headers['if-range'] !== undefined) {
-      throw new HttpError(501, 'if_range_not_supported', 'If-Range is not supported')
-    }
-    if (rangeHeader !== undefined && request.headers['if-none-match'] !== undefined) {
-      throw new HttpError(
-        501,
-        'conditional_range_not_supported',
-        'conditional range requests are not supported',
-      )
-    }
+    const rangeAllowed =
+      rangeHeader !== undefined &&
+      (request.headers['if-range'] === undefined ||
+        matchesIfRange(request.headers['if-range'], etag, fileStat.mtimeMs))
 
     let range
     try {
-      range = parseSingleByteRange(rangeHeader, fileSize)
+      // A stale or unrecognised If-Range is safe fallback-to-full-response
+      // behaviour. It must not turn into a 416 for an otherwise valid file.
+      range = rangeAllowed ? parseSingleByteRange(rangeHeader, fileSize) : null
     } catch (error) {
       if (error instanceof RangeParseError) {
         throw new HttpError(
@@ -223,12 +245,6 @@ export class DocumentReadService {
         )
       }
       throw error
-    }
-
-    if (!range && matchesIfNoneMatch(request.headers['if-none-match'], etag)) {
-      response.writeHead(304, commonHeaders)
-      response.end()
-      return
     }
 
     const statusCode = range ? 206 : 200
