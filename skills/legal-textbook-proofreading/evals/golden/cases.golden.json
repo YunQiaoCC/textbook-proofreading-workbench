@@ -1,0 +1,373 @@
+[
+  {
+    "caseId": "01-typo-static",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_dc83d21c6850f586",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-01",
+        "pdfPage": 12,
+        "blockId": "blk-12-03",
+        "originalText": "用人单位应当依法与劳动者订立书面劳功合同。",
+        "issueType": "typo",
+        "ruleType": "static",
+        "severity": "minor",
+        "extractionReliability": "high",
+        "verificationStatus": "not_required",
+        "retrievalRequired": "no",
+        "evidence": [],
+        "judgement": "confirmed_error",
+        "suggestion": "将“劳功合同”改为“劳动合同”。",
+        "reason": "“劳功”是清楚的字符错误，影响术语准确性。",
+        "confidence": "high",
+        "humanResolution": "pending",
+        "correctedText": "用人单位应当依法与劳动者订立书面劳动合同。"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified"] }
+  },
+  {
+    "caseId": "02-correct-article-negative",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["article_number", "legal_source_mismatch"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "03-wrong-article-number",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_991eb1adc62e78e4",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-02",
+        "pdfPage": 28,
+        "blockId": "blk-28-02",
+        "originalText": "《示例劳动规则》第四十二条规定，试用期一律不得解除劳动合同。",
+        "issueType": "article_number",
+        "ruleType": "verify",
+        "severity": "major",
+        "extractionReliability": "high",
+        "verificationStatus": "unverified",
+        "retrievalRequired": "must",
+        "evidence": [],
+        "judgement": "likely_error",
+        "suggestion": "查核官方法源后更正条号及对应命题。",
+        "reason": "条号与强规范命题必须以权威法源核验；本轮未实际检索。",
+        "confidence": "medium",
+        "temporalContext": "current",
+        "disputeStatus": "none",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified"], "forbiddenJudgements": ["confirmed_error"] }
+  },
+  {
+    "caseId": "04-repealed-as-current",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_1f4b91ef2039ebfa",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-03",
+        "pdfPage": 46,
+        "blockId": "blk-46-01",
+        "originalText": "某试行办法仍是现行有效的全国性劳动规范。",
+        "issueType": "law_status",
+        "ruleType": "verify",
+        "severity": "major",
+        "extractionReliability": "high",
+        "verificationStatus": "unverified",
+        "retrievalRequired": "must",
+        "evidence": [],
+        "judgement": "likely_error",
+        "suggestion": "核验官方效力状态；如已废止，改为历史说明并标明失效时间。",
+        "reason": "现行效力及全国适用范围都是必须查证的外部事实。",
+        "confidence": "medium",
+        "temporalContext": "current",
+        "jurisdictionScope": "全国",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified"], "forbiddenJudgements": ["confirmed_error"] }
+  },
+  {
+    "caseId": "05-historical-law-negative",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high", "temporalContext": "historical" },
+    "forbidden": { "issueTypes": ["law_status", "historical_context"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "06-academic-dispute",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_608339aa7cede470",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-04",
+        "pdfPage": 61,
+        "blockId": "blk-61-05",
+        "originalText": "劳动关系从属性只能依据人格从属性判断，其他学说均属错误。",
+        "issueType": "legal_concept",
+        "ruleType": "judgement",
+        "severity": "clarification",
+        "extractionReliability": "high",
+        "verificationStatus": "unverified",
+        "retrievalRequired": "should",
+        "evidence": [],
+        "judgement": "ambiguous",
+        "suggestion": "改为呈现主要学说及其分歧，并说明本书采用的分析立场。",
+        "reason": "该命题把合理学术争议写成唯一答案，需要保护可争辩的学术立场。",
+        "confidence": "medium",
+        "disputeStatus": "academic_dispute",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "forbiddenJudgements": ["confirmed_error"], "verificationStatuses": ["verified"] }
+  },
+  {
+    "caseId": "07-ordinary-case-overgeneralized",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_4456879176de5305",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-05",
+        "pdfPage": 79,
+        "blockId": "blk-79-02",
+        "originalText": "某基层法院曾支持该请求，因此全国法院对此均应作相同处理。",
+        "issueType": "case_claim",
+        "ruleType": "judgement",
+        "severity": "major",
+        "extractionReliability": "high",
+        "verificationStatus": "unverified",
+        "retrievalRequired": "must",
+        "evidence": [],
+        "judgement": "correct_but_misleading",
+        "suggestion": "将该案限定为个案裁判，并在核验案情、裁判结论及地位后说明其参考范围。",
+        "reason": "普通个案不能自动推出全国统一规则，且案件事实与地位尚未实际核验。",
+        "confidence": "high",
+        "disputeStatus": "none",
+        "jurisdictionScope": "个案审理法院辖区",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified"], "forbiddenJudgements": ["confirmed_error"] }
+  },
+  {
+    "caseId": "08-local-rule-nationalized",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_140de570eb3e95a4",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-06",
+        "pdfPage": 93,
+        "blockId": "blk-93-04",
+        "originalText": "上海市某地方规定要求的材料，是全国所有劳动争议案件统一适用的要求。",
+        "issueType": "overstrong_claim",
+        "ruleType": "verify",
+        "severity": "major",
+        "extractionReliability": "high",
+        "verificationStatus": "unverified",
+        "retrievalRequired": "must",
+        "evidence": [],
+        "judgement": "likely_error",
+        "suggestion": "核验该规定效力与适用范围，并将表述限定为上海市相关程序。",
+        "reason": "地方规则不能未经核验扩张为全国统一要求。",
+        "confidence": "medium",
+        "temporalContext": "current",
+        "jurisdictionScope": "上海市",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified"], "jurisdictionScopes": ["全国"] }
+  },
+  {
+    "caseId": "09-low-extraction-manual-check",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_a642a9ea9fe4a6d8",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-07",
+        "pdfPage": 108,
+        "blockId": "blk-108-09",
+        "originalText": "用 人 单 位 应 当 支 付 经 济 补 偿。",
+        "issueType": "wording",
+        "ruleType": "static",
+        "severity": "clarification",
+        "extractionReliability": "low",
+        "verificationStatus": "manual_check_required",
+        "retrievalRequired": "no",
+        "evidence": [],
+        "judgement": "ambiguous",
+        "suggestion": "人工查看原始页面，确认字符间空格是否来自版面抽取。",
+        "reason": "过量 CJK 空格与碎片化 block 使文本层不足以支持强判。",
+        "confidence": "low",
+        "humanReviewNote": "需要可靠视觉或人工核对；v0.1 不接入视觉/OCR 核验。",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "forbiddenJudgements": ["confirmed_error"], "verificationStatuses": ["verified", "not_required"] }
+  },
+  {
+    "caseId": "10-correct-needs-qualification",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_a7c05e400855c4ab",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-08",
+        "pdfPage": 124,
+        "blockId": "blk-124-03",
+        "originalText": "劳动者提前通知用人单位后即可解除任何劳动合同。",
+        "issueType": "legal_concept",
+        "ruleType": "judgement",
+        "severity": "clarification",
+        "extractionReliability": "high",
+        "verificationStatus": "unverified",
+        "retrievalRequired": "should",
+        "evidence": [],
+        "judgement": "correct_but_needs_qualification",
+        "suggestion": "限定适用的合同与程序情形，并提示例外规则。",
+        "reason": "核心方向可以成立，但“任何”会掩盖范围和例外。",
+        "confidence": "medium",
+        "temporalContext": "current",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "forbiddenJudgements": ["confirmed_error"], "verificationStatuses": ["verified"] }
+  },
+  {
+    "caseId": "11-typical-vs-guiding-case",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_9789f8a749b2de11",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-09",
+        "pdfPage": 139,
+        "blockId": "blk-139-06",
+        "originalText": "某高级人民法院发布的典型案例属于最高人民法院指导性案例。",
+        "issueType": "case_citation",
+        "ruleType": "verify",
+        "severity": "major",
+        "extractionReliability": "high",
+        "verificationStatus": "unverified",
+        "retrievalRequired": "must",
+        "evidence": [],
+        "judgement": "likely_error",
+        "suggestion": "核验官方案例目录，并准确标注案例发布机关与案例类型。",
+        "reason": "典型案例与指导性案例的官方地位不同，不能依据名称推定。",
+        "confidence": "medium",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified"], "forbiddenJudgements": ["confirmed_error"] }
+  },
+  {
+    "caseId": "12-correct-conclusion-wrong-citation",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_276cf9c9f9436ba7",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-10",
+        "pdfPage": 153,
+        "blockId": "blk-153-02",
+        "originalText": "正文关于书面劳动合同的结论正确，脚注却指向一部无关的行政法规。",
+        "issueType": "citation",
+        "ruleType": "verify",
+        "severity": "minor",
+        "extractionReliability": "high",
+        "verificationStatus": "unverified",
+        "retrievalRequired": "must",
+        "evidence": [],
+        "judgement": "likely_error",
+        "suggestion": "保留正确的正文结论，核验后替换为直接支持该命题的法源。",
+        "reason": "问题在出处而非正文法律结论；错引法源必须核验。",
+        "confidence": "medium",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "issueTypes": ["legal_concept"], "verificationStatuses": ["verified"] }
+  },
+  {
+    "caseId": "13-acceptable-abbreviation-negative",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["terminology_inconsistency", "wording"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "14-safe-pedagogical-simplification-negative",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["pedagogical_clarification", "overstrong_claim"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "15-cross-chapter-concept-conflict",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_2eeebc7b4e771eec",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-11",
+        "pdfPage": 171,
+        "blockId": "blk-171-01",
+        "originalText": "本章将“劳动合同解除”定义为合同期满自然终止，与第三章定义冲突。",
+        "issueType": "terminology_inconsistency",
+        "ruleType": "static",
+        "severity": "major",
+        "extractionReliability": "high",
+        "verificationStatus": "not_required",
+        "retrievalRequired": "no",
+        "evidence": [],
+        "judgement": "confirmed_error",
+        "suggestion": "统一解除与终止的内部定义，并保留二者的概念区分。",
+        "reason": "提供的跨章节定义直接冲突，会导致核心概念混淆。",
+        "confidence": "high",
+        "disputeStatus": "none",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified"] }
+  },
+  {
+    "caseId": "16-foreign-law-scope-missing",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_6bb5993244d3a438",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-12",
+        "pdfPage": 188,
+        "blockId": "blk-188-04",
+        "originalText": "雇主可以在无理由的情况下随时终止雇佣关系。",
+        "issueType": "pedagogical_clarification",
+        "ruleType": "judgement",
+        "severity": "clarification",
+        "extractionReliability": "high",
+        "verificationStatus": "unverified",
+        "retrievalRequired": "should",
+        "evidence": [],
+        "judgement": "correct_but_needs_qualification",
+        "suggestion": "注明具体国家或地区、规则名称与适用条件。",
+        "reason": "外国法规则未说明法域，读者可能将特定制度误解为普遍规则。",
+        "confidence": "medium",
+        "humanReviewNote": "法域未知，不能默认全国或任一外国法域。",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "jurisdictionScopes": ["全国"], "verificationStatuses": ["verified"], "forbiddenJudgements": ["confirmed_error"] }
+  }
+]
+

@@ -16,7 +16,8 @@
     "test:chapters": "node scripts/test-chapters.mjs",
     "test:document-delete": "node scripts/test-document-delete.mjs",
     "test:issue-delete": "node scripts/test-issue-delete.mjs",
-    "test:text-extraction": "node scripts/test-text-extraction.mjs"
+    "test:text-extraction": "node scripts/test-text-extraction.mjs",
+    "test:legal-skill": "node scripts/validate-legal-proofreading-skill.mjs"
   },
   "dependencies": {
     "inklayer-vue": "^1.0.4",

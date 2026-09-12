@@ -1,0 +1,240 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yunqiaocc.github.io/textbook-proofreading-workbench/schemas/legal-textbook-proofreading/issue-v0.1.schema.json",
+  "title": "Legal Textbook Proofreading Candidate Issue v0.1",
+  "description": "A review candidate emitted by the legal textbook proofreading skill. It is not a final erratum or an existing product ProofreadingIssue.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "documentId",
+    "chapterId",
+    "pdfPage",
+    "originalText",
+    "issueType",
+    "ruleType",
+    "severity",
+    "extractionReliability",
+    "verificationStatus",
+    "retrievalRequired",
+    "evidence",
+    "judgement",
+    "suggestion",
+    "reason",
+    "confidence",
+    "humanResolution"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "0.1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^ltp_[a-f0-9]{16}$"
+    },
+    "documentId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chapterId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pdfPage": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "blockId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "originalText": {
+      "type": "string",
+      "minLength": 1
+    },
+    "issueType": {
+      "enum": [
+        "typo",
+        "punctuation",
+        "wording",
+        "terminology_inconsistency",
+        "legal_concept",
+        "legal_source_mismatch",
+        "law_status",
+        "article_number",
+        "effective_date",
+        "historical_context",
+        "case_claim",
+        "case_citation",
+        "data_claim",
+        "citation",
+        "cross_reference",
+        "overstrong_claim",
+        "pedagogical_clarification",
+        "format"
+      ]
+    },
+    "ruleType": {
+      "enum": ["static", "verify", "judgement"]
+    },
+    "severity": {
+      "enum": ["critical", "major", "minor", "clarification"]
+    },
+    "extractionReliability": {
+      "enum": ["high", "medium", "low"]
+    },
+    "verificationStatus": {
+      "enum": [
+        "not_required",
+        "unverified",
+        "verified",
+        "insufficient_evidence",
+        "manual_check_required"
+      ]
+    },
+    "retrievalRequired": {
+      "enum": ["must", "should", "no"]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidenceItem"
+      }
+    },
+    "judgement": {
+      "enum": [
+        "confirmed_error",
+        "likely_error",
+        "ambiguous",
+        "correct_but_misleading",
+        "correct_but_needs_qualification"
+      ]
+    },
+    "suggestion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "confidence": {
+      "enum": ["high", "medium", "low"]
+    },
+    "temporalContext": {
+      "enum": ["current", "historical", "mixed", "unspecified"]
+    },
+    "disputeStatus": {
+      "enum": ["none", "academic_dispute", "judicial_divergence", "unclear"]
+    },
+    "jurisdictionScope": {
+      "type": "string",
+      "minLength": 1
+    },
+    "humanReviewNote": {
+      "type": "string",
+      "minLength": 1
+    },
+    "humanResolution": {
+      "enum": ["pending", "accepted", "modified", "rejected"]
+    },
+    "correctedText": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "$defs": {
+    "evidenceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceType", "authorityAxis", "title", "supports"],
+      "properties": {
+        "sourceType": {
+          "enum": [
+            "law",
+            "administrative_regulation",
+            "judicial_interpretation",
+            "department_rule",
+            "local_regulation",
+            "guiding_case",
+            "official_case",
+            "court_judgment",
+            "normative_document",
+            "academic_article",
+            "book",
+            "textbook",
+            "official_data",
+            "other"
+          ]
+        },
+        "authorityAxis": {
+          "enum": ["normative", "academic", "other"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issuerOrAuthor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "citationOrUrl": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supports": {
+          "type": "string",
+          "minLength": 1
+        },
+        "publicationDate": {
+          "type": "string",
+          "minLength": 1
+        },
+        "effectiveStatus": {
+          "type": "string",
+          "minLength": 1
+        },
+        "jurisdiction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "limitations": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "ruleType": { "const": "verify" },
+          "verificationStatus": { "const": "verified" }
+        },
+        "required": ["ruleType", "verificationStatus"]
+      },
+      "then": {
+        "properties": {
+          "evidence": { "minItems": 1 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "extractionReliability": { "const": "low" }
+        },
+        "required": ["extractionReliability"]
+      },
+      "then": {
+        "properties": {
+          "judgement": {
+            "not": { "const": "confirmed_error" }
+          }
+        }
+      }
+    }
+  ]
+}
