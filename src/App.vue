@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
-import { PdfAnnotator, type Annotation } from 'inklayer-vue'
+import { PdfAnnotator, type Annotation, type IAnnotationStore } from 'inklayer-vue'
 import 'inklayer-vue/style'
 
 import DocumentUploader from './components/DocumentUploader.vue'
@@ -11,6 +11,7 @@ import InkLayerActions from './components/InkLayerActions.vue'
 import { documentFileUrl } from './services/documentApi'
 import { useDocumentWorkspace } from './features/documents/useDocumentWorkspace'
 import { useProofreadingWorkspace } from './features/proofreading/useProofreadingWorkspace'
+import { annotationStoresToCore } from './utils/annotationAdapter'
 
 const currentUser = { id: 'proofreader-demo', name: '校对员' }
 const documentStatusLabels = {
@@ -26,7 +27,7 @@ const {
   documents,
   selectedDocumentId,
   selectedDocument,
-  loading,
+  loading: documentLoading,
   error,
   loadDocuments,
   selectDocument,
@@ -38,6 +39,10 @@ const {
   selectedIssueId,
   selectedIssue,
   lastSavedAt,
+  loading: proofreadingLoading,
+  saving,
+  saveError,
+  conflict,
   addManualIssue,
   selectIssue,
   updateIssue,
@@ -47,10 +52,12 @@ const {
   handleAnnotationSelected,
   handleAnnotationUpdated,
   handleSave,
+  reload,
   exportIssues,
 } = useProofreadingWorkspace(currentUser.name, selectedDocumentId)
 
 const pdfUrl = computed(() => selectedDocument.value ? documentFileUrl(selectedDocument.value.id) : '')
+const inkLayerInitialAnnotations = computed(() => annotationStoresToCore(annotations.value))
 const selectedDocumentStatus = computed(() => {
   const status = selectedDocument.value?.processingStatus
   return status ? documentStatusLabels[status] : ''
@@ -58,6 +65,13 @@ const selectedDocumentStatus = computed(() => {
 const documentContext = computed(() => selectedDocument.value
   ? `${selectedDocument.value.pageCount} 页 · ${selectedDocumentStatus.value}`
   : '选择或上传一份教材')
+const saveIndicator = computed(() => {
+  if (proofreadingLoading.value) return '正在加载'
+  if (conflict.value) return '存在版本冲突'
+  if (saving.value) return '正在保存'
+  if (saveError.value) return '保存失败'
+  return lastSavedAt.value ? `已保存 ${lastSavedAt.value}` : '尚未保存'
+})
 
 onMounted(() => { void loadDocuments() })
 
@@ -69,7 +83,11 @@ function onDocumentUploaded(documentId: string) {
   void loadDocuments(documentId)
 }
 
-function onAnnotationSelected(annotation: Annotation | null) {
+function reloadWorkspace() {
+  void reload()
+}
+
+function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) {
   handleAnnotationSelected(annotation)
 }
 </script>
@@ -93,10 +111,11 @@ function onAnnotationSelected(annotation: Annotation | null) {
       </div>
 
       <div class="header-actions">
-        <span class="save-indicator">
+        <span class="save-indicator" :class="{ 'save-indicator-alert': conflict || saveError }">
           <span class="save-dot" />
-          {{ lastSavedAt ? `已保存 ${lastSavedAt}` : '本地自动保存' }}
+          {{ saveIndicator }}
         </span>
+        <button v-if="conflict" class="header-link" type="button" @click="reloadWorkspace">重新加载</button>
         <button class="header-button" type="button" :disabled="!selectedDocument" @click="exportIssues">
           <span aria-hidden="true">↥</span>
           导出校对表
@@ -111,7 +130,7 @@ function onAnnotationSelected(annotation: Annotation | null) {
         <DocumentOutline
           :documents="documents"
           :selected-document-id="selectedDocumentId"
-          :loading="loading"
+          :loading="documentLoading"
           :error="error"
           @select="onDocumentSelected"
         />
@@ -134,7 +153,7 @@ function onAnnotationSelected(annotation: Annotation | null) {
 
         <div class="inklayer-frame">
           <PdfAnnotator
-            v-if="selectedDocument && selectedDocument.processingStatus !== 'failed'"
+            v-if="selectedDocument && selectedDocument.processingStatus !== 'failed' && !proofreadingLoading"
             :key="selectedDocument.id"
             :url="pdfUrl"
             :user="currentUser"
@@ -144,7 +163,7 @@ function onAnnotationSelected(annotation: Annotation | null) {
             :layout-style="{ width: '100%', height: '100%' }"
             :default-show-annotations-sidebar="true"
             :default-show-annotation-author-labels="false"
-            :initial-annotations="annotations"
+            :initial-annotations="inkLayerInitialAnnotations"
             :actions="InkLayerActions"
             @save="handleSave"
             @annotation-added="handleAnnotationAdded"
@@ -154,8 +173,8 @@ function onAnnotationSelected(annotation: Annotation | null) {
           />
           <div v-else class="reader-empty">
             <div class="reader-empty-icon">PDF</div>
-            <strong>{{ selectedDocument?.processingStatus === 'failed' ? 'PDF 检查失败' : '选择或上传一份教材' }}</strong>
-            <span>{{ selectedDocument?.processingStatus === 'failed' ? '请检查文件后重试' : documents.length ? '从左侧选择一份教材' : '尚未上传教材' }}</span>
+            <strong>{{ selectedDocument?.processingStatus === 'failed' ? 'PDF 检查失败' : proofreadingLoading ? '正在加载校对数据…' : '选择或上传一份教材' }}</strong>
+            <span>{{ selectedDocument?.processingStatus === 'failed' ? '请检查文件后重试' : proofreadingLoading ? '正在从服务器读取校对意见' : documents.length ? '从左侧选择一份教材' : '尚未上传教材' }}</span>
           </div>
         </div>
       </section>
@@ -237,7 +256,10 @@ button { cursor: pointer; }
 .context-divider { color: #58647a; }
 .header-actions { gap: 15px; }
 .save-indicator { gap: 7px; color: #aab4c6; font-size: 11px; white-space: nowrap; }
+.save-indicator-alert { color: #e7b4a2; }
 .save-dot { width: 7px; height: 7px; background: #66c2a3; border-radius: 50%; box-shadow: 0 0 0 3px rgba(102, 194, 163, 0.14); }
+.header-link { padding: 0; color: #e7c68f; font-size: 10px; background: transparent; border: 0; }
+.header-link:hover { color: #fff1ca; }
 .header-button { display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; color: #e9eef8; font-size: 12px; background: #253149; border: 1px solid #3b4963; border-radius: 7px; }
 .header-button:hover { background: #30405d; }
 .user-avatar { display: grid; width: 28px; height: 28px; place-items: center; color: #172033; font-weight: 700; font-size: 11px; background: #e2c58f; border-radius: 50%; }

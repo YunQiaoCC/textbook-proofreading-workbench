@@ -1,5 +1,20 @@
-import type { Annotation } from 'inklayer-vue'
+import {
+  annotationToStore as coreAnnotationToStore,
+  storeToAnnotation,
+  type Annotation,
+  type IAnnotationStore,
+} from 'inklayer-vue'
 import type { ProofreadingIssue } from '../models/proofreading'
+
+export type InkLayerAnnotationValue = Annotation | IAnnotationStore
+
+export function isAnnotationStore(value: InkLayerAnnotationValue): value is IAnnotationStore {
+  return 'konvaString' in value && 'konvaClientRect' in value && 'pageNumber' in value
+}
+
+export function annotationValueToStore(value: InkLayerAnnotationValue): IAnnotationStore {
+  return isAnnotationStore(value) ? value : coreAnnotationToStore(value)
+}
 
 function getTextFromAnnotation(annotation: Annotation) {
   const payload = annotation.payload
@@ -29,3 +44,14 @@ export function annotationToIssue(
   }
 }
 
+export function annotationStoresToCore(stores: readonly IAnnotationStore[]): Annotation[] {
+  const result: Annotation[] = []
+  for (const store of stores) {
+    try {
+      result.push(storeToAnnotation(store))
+    } catch {
+      // Keep the review list usable if an older/incomplete annotation cannot be rendered by InkLayer.
+    }
+  }
+  return result
+}

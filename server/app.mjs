@@ -3,9 +3,11 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { createServerConfig } from './config.mjs'
 import { FileBackedDocumentRepository } from './repositories/fileBackedDocumentRepository.mjs'
+import { FileBackedProofreadingRepository } from './repositories/fileBackedProofreadingRepository.mjs'
 import { LocalDocumentStorage } from './services/localDocumentStorage.mjs'
 import { PopplerInspectionService } from './services/popplerInspection.mjs'
 import { DocumentReadService } from './services/documentReadService.mjs'
+import { MAX_PROOFREADING_BODY_BYTES, ProofreadingService } from './services/proofreadingService.mjs'
 import { HttpError, UploadSessionService } from './services/uploadSessionService.mjs'
 
 const MAX_JSON_BODY = 64 * 1024
@@ -21,12 +23,12 @@ function sendJson(response, statusCode, value, headers = {}) {
   response.end(body)
 }
 
-async function readJsonBody(request) {
+async function readJsonBody(request, maxBytes = MAX_JSON_BODY) {
   const chunks = []
   let totalBytes = 0
   for await (const chunk of request) {
     totalBytes += chunk.length
-    if (totalBytes > MAX_JSON_BODY) {
+    if (totalBytes > maxBytes) {
       throw new HttpError(413, 'json_body_too_large', 'JSON request body is too large')
     }
     chunks.push(chunk)
@@ -60,13 +62,17 @@ function requestContentLength(request) {
 
 function errorResponse(error) {
   if (error instanceof HttpError) {
+    const body = {
+      error: error.code,
+      message: error.message,
+      ...(error.details ? { details: error.details } : {}),
+    }
+    if (error.code === 'proofreading_revision_conflict') {
+      body.currentRevision = error.details?.currentRevision
+    }
     return {
       statusCode: error.statusCode,
-      body: {
-        error: error.code,
-        message: error.message,
-        ...(error.details ? { details: error.details } : {}),
-      },
+      body,
       headers: error.headers,
     }
   }
@@ -77,7 +83,7 @@ function errorResponse(error) {
   }
 }
 
-async function handleRequest(request, response, uploadService, documentReadService) {
+async function handleRequest(request, response, uploadService, documentReadService, proofreadingService) {
   const segments = routeSegments(request.url ?? '/')
 
   if (segments.length === 2 && segments[0] === 'api' && segments[1] === 'documents') {
@@ -101,6 +107,24 @@ async function handleRequest(request, response, uploadService, documentReadServi
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
     sendJson(response, 200, await documentReadService.pages(segments[2]))
     return
+  }
+
+  if (
+    segments.length === 4 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'proofreading'
+  ) {
+    if (request.method === 'GET') {
+      sendJson(response, 200, await proofreadingService.get(segments[2]))
+      return
+    }
+    if (request.method === 'PUT') {
+      const body = await readJsonBody(request, MAX_PROOFREADING_BODY_BYTES)
+      sendJson(response, 200, await proofreadingService.save(segments[2], body))
+      return
+    }
+    throw new HttpError(405, 'method_not_allowed', 'method not allowed')
   }
 
   if (
@@ -160,13 +184,16 @@ export async function createIngestionServer(options = {}) {
   const config = createServerConfig(options)
   const documentStorage = new LocalDocumentStorage(config.storageRoot)
   const documentRepository = new FileBackedDocumentRepository(config.storageRoot)
+  const proofreadingRepository = new FileBackedProofreadingRepository(config.storageRoot)
   const documentReadService = new DocumentReadService({ documentRepository, documentStorage })
+  const proofreadingService = new ProofreadingService({ documentRepository, proofreadingRepository })
   const inspectionService = new PopplerInspectionService({
     storageRoot: config.storageRoot,
     timeoutMs: config.inspectionTimeoutMs,
   })
   await documentStorage.init()
   await documentRepository.init()
+  await proofreadingRepository.init()
   await inspectionService.init()
   const uploadService = new UploadSessionService({
     storageRoot: config.storageRoot,
@@ -179,7 +206,7 @@ export async function createIngestionServer(options = {}) {
   await uploadService.init()
 
   const server = createHttpServer((request, response) => {
-    void handleRequest(request, response, uploadService, documentReadService).catch((error) => {
+    void handleRequest(request, response, uploadService, documentReadService, proofreadingService).catch((error) => {
       if (!response.headersSent) {
         const result = errorResponse(error)
         sendJson(response, result.statusCode, result.body, result.headers)
@@ -201,6 +228,8 @@ export async function createIngestionServer(options = {}) {
     documentStorage,
     documentRepository,
     documentReadService,
+    proofreadingRepository,
+    proofreadingService,
     uploadService,
     async close() {
       clearInterval(cleanupTimer)

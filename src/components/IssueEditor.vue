@@ -65,7 +65,7 @@ function setStatus(status: IssueStatus) {
         </div>
       </div>
 
-      <div class="editor-footer"><span class="autosave-note"><span>●</span> 修改自动保存到本地</span><button class="save-button" type="button" @click="commit">保存意见</button></div>
+      <div class="editor-footer"><span class="autosave-note"><span>●</span> 修改自动保存到服务器</span><button class="save-button" type="button" @click="commit">保存意见</button></div>
     </template>
   </section>
 </template>
@@ -97,4 +97,3 @@ h2 { margin: 4px 0 0; color: #263149; font-size: 16px; }
 .editor-empty-icon { display: grid; width: 38px; height: 38px; margin-bottom: 4px; place-items: center; color: #7894b7; font-size: 17px; background: #eef4fb; border-radius: 50%; }
 .editor-empty strong { color: #69778c; font-size: 11px; } .editor-empty span { max-width: 190px; font-size: 10px; line-height: 1.5; }
 </style>
-
