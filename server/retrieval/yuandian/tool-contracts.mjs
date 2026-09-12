@@ -10,31 +10,160 @@ export const YUANDIAN_LAW_TOOLS = Object.freeze({
 
 export const YUANDIAN_TOOL_ALLOWLIST = Object.freeze(Object.values(YUANDIAN_LAW_TOOLS))
 
-// Documented contract expectations from the capability audit. These are not
-// runtime-discovered MCP schemas. The first real-key smoke test must list tools
-// and fail safely if the server's schemas conflict with these minimum fields.
+const SEARCH_DATE_FIELDS = [
+  'fbrq_start', 'fbrq_end', 'ssrq_start', 'ssrq_end',
+]
+
+// Input contract observed from the first real tools/list on 2026-09-12.
+// `allowed` is a provider-private baseline, while `used` is the smaller set
+// the v0.1 adapter may actually send. Response fields remain expectations
+// until the first successful real tools/call verifies their shape.
 export const YUANDIAN_TOOL_CONTRACTS = Object.freeze({
   [YUANDIAN_LAW_TOOLS.VECTOR_SEARCH]: {
-    request: ['query', 'refer_date?'],
-    response: ['candidate list', 'fgid?', 'ftid?', 'fgmc?', 'ftnum?', 'dy?'],
+    required: ['query'],
+    allowed: ['query', 'rewrite_flag', 'fatiao_filter', 'return_num'],
+    used: ['query', 'return_num'],
+    parameterTypes: {
+      query: 'string', rewrite_flag: 'boolean', fatiao_filter: 'object', return_num: 'number',
+    },
+    nestedFields: {
+      fatiao_filter: {
+        sxx: 'array:string', effect1: 'array:string', law_start: 'string', law_end: 'string',
+      },
+    },
+    responseFields: ['candidate list', 'id?', 'ftid?', 'fgid?', 'fgmc?', 'ftnum?', 'dy?'],
   },
   [YUANDIAN_LAW_TOOLS.ARTICLE_SEARCH]: {
-    request: ['keyword', 'fgmc?', 'ftnum?', 'refer_date?'],
-    response: ['candidate list', 'fgid?', 'ftid?', 'fgmc?', 'ftnum?', 'dy?'],
+    required: ['keyword'],
+    allowed: [
+      'keyword', 'search_mode', 'fgmc', 'xljb_1', 'sxx', 'dy', 'fbbm',
+      ...SEARCH_DATE_FIELDS, 'top_k',
+    ],
+    used: ['keyword', 'fgmc', 'top_k'],
+    parameterTypes: Object.fromEntries([
+      'keyword', 'search_mode', 'fgmc', 'xljb_1', 'sxx', 'dy', 'fbbm',
+      ...SEARCH_DATE_FIELDS,
+    ].map((name) => [name, 'string']).concat([['top_k', 'number']])),
+    responseFields: ['candidate list', 'id?', 'ftid?', 'fgid?', 'fgmc?', 'ftnum?', 'dy?'],
   },
   [YUANDIAN_LAW_TOOLS.STATUTE_SEARCH]: {
-    request: ['fgmc', 'refer_date?'],
-    response: ['candidate list', 'fgid?', 'fgmc?', 'dy?'],
+    required: [],
+    allowed: [
+      'keyword', 'search_mode', 'fgmc', 'sxx', 'dy', 'xljb_1', 'fbbm',
+      ...SEARCH_DATE_FIELDS, 'top_k',
+    ],
+    used: ['fgmc', 'top_k'],
+    parameterTypes: Object.fromEntries([
+      'keyword', 'search_mode', 'fgmc', 'sxx', 'dy', 'xljb_1', 'fbbm',
+      ...SEARCH_DATE_FIELDS,
+    ].map((name) => [name, 'string']).concat([['top_k', 'number']])),
+    responseFields: ['candidate list', 'id?', 'fgid?', 'fgmc?', 'dy?'],
   },
   [YUANDIAN_LAW_TOOLS.ARTICLE_DETAIL]: {
-    request: ['fgmc?', 'ftnum?', 'fgid?', 'ftid?', 'refer_date?'],
-    response: ['fgmc', 'ftnum?', 'xljb', 'fbrq?', 'ssrq?', 'sxx?', 'detail text'],
+    required: [],
+    allowed: ['id', 'fgmc', 'ftnum', 'refer_date'],
+    used: ['id', 'fgmc', 'ftnum', 'refer_date'],
+    parameterTypes: { id: 'string', fgmc: 'string', ftnum: 'string', refer_date: 'string' },
+    responseFields: ['fgmc', 'ftnum?', 'xljb_1?', 'xljb_2?', 'xljb?', 'fbrq?', 'ssrq?', 'sxx?', 'detail text'],
   },
   [YUANDIAN_LAW_TOOLS.STATUTE_DETAIL]: {
-    request: ['fgmc?', 'fgid?', 'refer_date?'],
-    response: ['fgmc', 'xljb', 'fbrq?', 'ssrq?', 'sxx?', 'detail text'],
+    required: [],
+    allowed: ['id', 'fgmc', 'refer_date'],
+    used: ['id', 'fgmc', 'refer_date'],
+    parameterTypes: { id: 'string', fgmc: 'string', refer_date: 'string' },
+    responseFields: ['fgmc', 'xljb_1?', 'xljb_2?', 'xljb?', 'fbrq?', 'ssrq?', 'sxx?', 'detail text'],
   },
 })
+
+const SEARCH_TOOLS = new Set([
+  YUANDIAN_LAW_TOOLS.VECTOR_SEARCH,
+  YUANDIAN_LAW_TOOLS.ARTICLE_SEARCH,
+  YUANDIAN_LAW_TOOLS.STATUTE_SEARCH,
+])
+
+function sameSet(left, right) {
+  return left.length === right.length && left.every((value) => right.includes(value))
+}
+
+function runtimeType(property) {
+  if (!property || typeof property !== 'object') return undefined
+  if (property.type === 'array') return `array:${property.items?.type ?? 'unknown'}`
+  return property.type
+}
+
+export function validateYuandianRuntimeSchema(runtimeTools) {
+  const tools = Array.isArray(runtimeTools)
+    ? runtimeTools
+    : Array.isArray(runtimeTools?.tools)
+      ? runtimeTools.tools
+      : []
+  const byName = new Map(tools.map((tool) => [tool?.name, tool]))
+  const missingTools = YUANDIAN_TOOL_ALLOWLIST.filter((name) => !byName.has(name))
+  const incompatibleTools = new Set(missingTools)
+  const drift = missingTools.map((name) => `${name}: missing tool`)
+
+  for (const [toolName, contract] of Object.entries(YUANDIAN_TOOL_CONTRACTS)) {
+    const schema = byName.get(toolName)?.inputSchema
+    if (!schema || schema.type !== 'object' || !schema.properties || typeof schema.properties !== 'object') {
+      if (byName.has(toolName)) {
+        incompatibleTools.add(toolName)
+        drift.push(`${toolName}: inputSchema must be an object with properties`)
+      }
+      continue
+    }
+
+    const remoteRequired = Array.isArray(schema.required) ? schema.required : []
+    if (!sameSet(contract.required, remoteRequired)) {
+      incompatibleTools.add(toolName)
+      drift.push(`${toolName}: required fields changed`)
+    }
+
+    for (const parameter of contract.allowed) {
+      if (!Object.hasOwn(schema.properties, parameter)) {
+        drift.push(`${toolName}: optional field ${parameter} is absent`)
+        if (contract.used.includes(parameter)) incompatibleTools.add(toolName)
+        continue
+      }
+      const actualType = runtimeType(schema.properties[parameter])
+      const expectedType = contract.parameterTypes[parameter]
+      if (actualType !== expectedType) {
+        incompatibleTools.add(toolName)
+        drift.push(`${toolName}.${parameter}: expected ${expectedType}, received ${actualType ?? 'unknown'}`)
+      }
+    }
+
+    if (SEARCH_TOOLS.has(toolName) && Object.hasOwn(schema.properties, 'refer_date')) {
+      incompatibleTools.add(toolName)
+      drift.push(`${toolName}: refer_date must remain detail-only`)
+    }
+
+    for (const [parent, nested] of Object.entries(contract.nestedFields ?? {})) {
+      const nestedProperties = schema.properties[parent]?.properties
+      if (!nestedProperties || typeof nestedProperties !== 'object') {
+        incompatibleTools.add(toolName)
+        drift.push(`${toolName}.${parent}: nested properties are missing`)
+        continue
+      }
+      for (const [field, expectedType] of Object.entries(nested)) {
+        const actualType = runtimeType(nestedProperties[field])
+        if (actualType !== expectedType) {
+          incompatibleTools.add(toolName)
+          drift.push(`${toolName}.${parent}.${field}: expected ${expectedType}, received ${actualType ?? 'unknown'}`)
+        }
+      }
+    }
+  }
+
+  return {
+    compatible: incompatibleTools.size === 0,
+    missingTools,
+    incompatibleTools: [...incompatibleTools],
+    drift,
+    extraTools: tools
+      .map((tool) => tool?.name)
+      .filter((name) => typeof name === 'string' && !YUANDIAN_TOOL_ALLOWLIST.includes(name)),
+  }
+}
 
 export function assertAllowedYuandianTool(toolName) {
   if (!YUANDIAN_TOOL_ALLOWLIST.includes(toolName)) {

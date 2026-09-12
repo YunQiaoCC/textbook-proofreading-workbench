@@ -19,11 +19,14 @@ export {
   getYuandianStatus,
 } from './yuandian/client.mjs'
 export {
+  KEYWORD_SEARCH_DEFAULT_TOP_K,
   MAX_PROVIDER_CALLS_PER_CLAIM,
+  VECTOR_SEARCH_DEFAULT_RETURN_NUM,
   YuandianRetrievalAdapter,
 } from './yuandian/adapter.mjs'
 export {
   YUANDIAN_LAW_TOOLS,
   YUANDIAN_TOOL_ALLOWLIST,
   YUANDIAN_TOOL_CONTRACTS,
+  validateYuandianRuntimeSchema,
 } from './yuandian/tool-contracts.mjs'

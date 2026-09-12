@@ -13,20 +13,43 @@ import {
 } from './normalize.mjs'
 
 export const MAX_PROVIDER_CALLS_PER_CLAIM = 3
+export const KEYWORD_SEARCH_DEFAULT_TOP_K = 5
+export const VECTOR_SEARCH_DEFAULT_RETURN_NUM = 5
 
 class ProviderCallBudgetError extends Error {}
 
-function withReferDate(claim, args) {
+function withDetailReferDate(claim, detailTool, args) {
+  if (![YUANDIAN_LAW_TOOLS.ARTICLE_DETAIL, YUANDIAN_LAW_TOOLS.STATUTE_DETAIL].includes(detailTool)) {
+    throw new RetrievalProviderError('invalid_request')
+  }
   return isHistoricalClaim(claim) ? { ...args, refer_date: claim.referenceDate } : args
 }
 
-function detailSelector(candidate, claim) {
-  return Object.fromEntries(Object.entries({
-    ftid: candidate?.ftid,
-    fgid: candidate?.fgid,
-    fgmc: candidate?.fgmc ?? claim.knownSourceTitle,
-    ftnum: candidate?.ftnum ?? claim.knownArticleNumber,
-  }).filter(([, value]) => typeof value === 'string' && value.trim()))
+function nonEmpty(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+export function articleDetailSelector(candidate, claim) {
+  const id = nonEmpty(candidate?.id) ?? nonEmpty(candidate?.ftid)
+  if (id) return { id }
+  const fgmc = nonEmpty(candidate?.fgmc) ?? nonEmpty(claim.knownSourceTitle)
+  const ftnum = nonEmpty(candidate?.ftnum) ?? nonEmpty(candidate?.ft_num) ?? nonEmpty(claim.knownArticleNumber)
+  if (!fgmc || !ftnum) throw new RetrievalProviderError('invalid_request')
+  return { fgmc, ftnum }
+}
+
+export function statuteDetailSelector(candidate, claim) {
+  const id = nonEmpty(candidate?.id) ?? nonEmpty(candidate?.fgid)
+  if (id) return { id }
+  const fgmc = nonEmpty(candidate?.fgmc) ?? nonEmpty(claim.knownSourceTitle)
+  if (!fgmc) throw new RetrievalProviderError('invalid_request')
+  return { fgmc }
+}
+
+function selectorFor(detailTool, candidate, claim) {
+  return detailTool === YUANDIAN_LAW_TOOLS.ARTICLE_DETAIL
+    ? articleDetailSelector(candidate, claim)
+    : statuteDetailSelector(candidate, claim)
 }
 
 function resultForError(claimId, error) {
@@ -57,13 +80,13 @@ export class YuandianRetrievalAdapter {
   }
 
   async #searchThenDetail(context, claim, searchTool, searchArgs, detailTool) {
-    const searchResult = await this.#call(context, searchTool, withReferDate(claim, searchArgs))
+    const searchResult = await this.#call(context, searchTool, searchArgs)
     const candidate = searchCandidates(readYuandianPayload(searchResult))[0]
     if (!candidate) return { notFound: true }
     const detailResult = await this.#call(
       context,
       detailTool,
-      withReferDate(claim, detailSelector(candidate, claim)),
+      withDetailReferDate(claim, detailTool, selectorFor(detailTool, candidate, claim)),
     )
     return { detailResult, candidate, detailTool }
   }
@@ -72,7 +95,7 @@ export class YuandianRetrievalAdapter {
     const knownArticle = claim.knownSourceTitle && claim.knownArticleNumber
     if (knownArticle && ['article_text', 'article_number'].includes(claim.kind)) {
       const detailTool = YUANDIAN_LAW_TOOLS.ARTICLE_DETAIL
-      const detailResult = await this.#call(context, detailTool, withReferDate(claim, {
+      const detailResult = await this.#call(context, detailTool, withDetailReferDate(claim, detailTool, {
         fgmc: claim.knownSourceTitle,
         ftnum: claim.knownArticleNumber,
       }))
@@ -86,7 +109,7 @@ export class YuandianRetrievalAdapter {
         context,
         claim,
         YUANDIAN_LAW_TOOLS.STATUTE_SEARCH,
-        { fgmc: claim.knownSourceTitle },
+        { fgmc: claim.knownSourceTitle, top_k: KEYWORD_SEARCH_DEFAULT_TOP_K },
         YUANDIAN_LAW_TOOLS.STATUTE_DETAIL,
       )
     }
@@ -97,9 +120,9 @@ export class YuandianRetrievalAdapter {
         claim,
         YUANDIAN_LAW_TOOLS.ARTICLE_SEARCH,
         {
-          keyword: claim.text,
+          keyword: [claim.text, claim.knownArticleNumber].filter(Boolean).join(' '),
           ...(claim.knownSourceTitle ? { fgmc: claim.knownSourceTitle } : {}),
-          ...(claim.knownArticleNumber ? { ftnum: claim.knownArticleNumber } : {}),
+          top_k: KEYWORD_SEARCH_DEFAULT_TOP_K,
         },
         YUANDIAN_LAW_TOOLS.ARTICLE_DETAIL,
       )
@@ -110,7 +133,7 @@ export class YuandianRetrievalAdapter {
         context,
         claim,
         YUANDIAN_LAW_TOOLS.STATUTE_SEARCH,
-        { fgmc: claim.text },
+        { fgmc: claim.text, top_k: KEYWORD_SEARCH_DEFAULT_TOP_K },
         YUANDIAN_LAW_TOOLS.STATUTE_DETAIL,
       )
     }
@@ -119,7 +142,7 @@ export class YuandianRetrievalAdapter {
       context,
       claim,
       YUANDIAN_LAW_TOOLS.VECTOR_SEARCH,
-      { query: claim.text },
+      { query: claim.text, return_num: VECTOR_SEARCH_DEFAULT_RETURN_NUM },
       YUANDIAN_LAW_TOOLS.ARTICLE_DETAIL,
     )
   }

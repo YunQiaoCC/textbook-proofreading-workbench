@@ -2,10 +2,14 @@
 
 import { strict as assert } from 'node:assert'
 import {
+  KEYWORD_SEARCH_DEFAULT_TOP_K,
+  VECTOR_SEARCH_DEFAULT_RETURN_NUM,
+  YUANDIAN_TOOL_CONTRACTS,
   YuandianMcpClient,
   YuandianRetrievalAdapter,
   createYuandianConfig,
   getYuandianStatus,
+  validateYuandianRuntimeSchema,
 } from '../server/retrieval/index.mjs'
 import { mapYuandianSourceType } from '../server/retrieval/yuandian/normalize.mjs'
 
@@ -20,6 +24,78 @@ globalThis.fetch = async () => {
 
 function mcp(payload) {
   return { content: [], structuredContent: payload }
+}
+
+function property(type, nestedProperties) {
+  return {
+    type,
+    ...(nestedProperties ? { properties: nestedProperties, required: [], additionalProperties: true } : {}),
+  }
+}
+
+function runtimeTool(name, properties, required = []) {
+  return { name, inputSchema: { type: 'object', properties, required, additionalProperties: true } }
+}
+
+function observedRuntimeTools() {
+  const searchStrings = Object.fromEntries([
+    'keyword', 'search_mode', 'fgmc', 'xljb_1', 'sxx', 'dy', 'fbbm',
+    'fbrq_start', 'fbrq_end', 'ssrq_start', 'ssrq_end',
+  ].map((name) => [name, property('string')]))
+  return [
+    runtimeTool('yuandian_law_vector_search', {
+      query: property('string'),
+      rewrite_flag: property('boolean'),
+      fatiao_filter: property('object', {
+        sxx: { type: 'array', items: { type: 'string' } },
+        effect1: { type: 'array', items: { type: 'string' } },
+        law_start: property('string'),
+        law_end: property('string'),
+      }),
+      return_num: property('number'),
+    }, ['query']),
+    runtimeTool('yuandian_rh_ft_search', { ...searchStrings, top_k: property('number') }, ['keyword']),
+    runtimeTool('yuandian_rh_fg_search', { ...searchStrings, top_k: property('number') }),
+    runtimeTool('yuandian_rh_ft_detail', {
+      id: property('string'), fgmc: property('string'), ftnum: property('string'), refer_date: property('string'),
+    }),
+    runtimeTool('yuandian_rh_fg_detail', {
+      id: property('string'), fgmc: property('string'), refer_date: property('string'),
+    }),
+  ]
+}
+
+function actualType(value) {
+  if (Array.isArray(value)) return 'array'
+  if (value === null) return 'null'
+  return typeof value
+}
+
+function assertRuntimeObservedRequest(request) {
+  const contract = YUANDIAN_TOOL_CONTRACTS[request.name]
+  assert.ok(contract, `tool is outside runtime contract: ${request.name}`)
+  const args = request.arguments ?? {}
+  for (const field of Object.keys(args)) {
+    assert.ok(contract.allowed.includes(field), `${request.name} must not send ${field}`)
+    assert.equal(actualType(args[field]), contract.parameterTypes[field], `${request.name}.${field} type`)
+  }
+  for (const field of contract.required) assert.ok(Object.hasOwn(args, field), `${request.name} requires ${field}`)
+  if (request.name.endsWith('_search') || request.name === 'yuandian_law_vector_search') {
+    assert.equal(Object.hasOwn(args, 'refer_date'), false, `${request.name} must not send refer_date`)
+  }
+  if (request.name === 'yuandian_rh_ft_search') {
+    assert.equal(Object.hasOwn(args, 'ftnum'), false, 'article search must not send ftnum')
+  }
+  if (request.name.endsWith('_detail')) {
+    assert.equal(Object.hasOwn(args, 'fgid'), false, 'detail request must not send fgid')
+    assert.equal(Object.hasOwn(args, 'ftid'), false, 'detail request must not send ftid')
+  }
+  if (request.name === 'yuandian_rh_ft_detail' && !args.id) {
+    assert.ok(args.fgmc && args.ftnum, 'article detail without id requires fgmc + ftnum')
+  }
+  if (request.name === 'yuandian_rh_fg_detail' && !args.id) {
+    assert.ok(args.fgmc, 'statute detail without id requires fgmc')
+  }
 }
 
 function statuteSearch(fgmc = '合成法律', extra = {}) {
@@ -69,6 +145,7 @@ class MockSession {
   }
 
   async callTool(request, options) {
+    assertRuntimeObservedRequest(request)
     this.calls.push({ request, options })
     const step = this.steps.shift()
     assert.ok(step, `unexpected tool call: ${request.name}`)
@@ -134,6 +211,22 @@ test('statute search then detail normalizes law evidence', async () => {
   assert.deepEqual(session.calls.map((call) => call.request.name), [
     'yuandian_rh_fg_search', 'yuandian_rh_fg_detail',
   ])
+  assert.deepEqual(session.calls[0].request.arguments, {
+    fgmc: '合成法律', top_k: KEYWORD_SEARCH_DEFAULT_TOP_K,
+  })
+  assert.deepEqual(session.calls[1].request.arguments, { id: 'fg-synth-1' })
+})
+
+test('runtime candidate id is forwarded as canonical statute detail id', async () => {
+  const { adapter, session } = harness([
+    { tool: 'yuandian_rh_fg_search', result: mcp({ data: [{ id: 'runtime-fg-id', fgmc: '合成法律' }] }) },
+    { tool: 'yuandian_rh_fg_detail', result: statuteDetail({ id: 'runtime-fg-id' }) },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-runtime-id', kind: 'legal_status', text: '合成状态', knownSourceTitle: '合成法律',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.deepEqual(session.calls[1].request.arguments, { id: 'runtime-fg-id' })
 })
 
 test('known article routes directly to article detail', async () => {
@@ -153,7 +246,26 @@ test('known article routes directly to article detail', async () => {
   })
 })
 
-test('historical lookup sends refer_date to search and detail', async () => {
+test('historical known article sends refer_date only to direct detail', async () => {
+  const { adapter, session } = harness([
+    { tool: 'yuandian_rh_ft_detail', result: articleDetail({ versionDate: '2009-12-31' }) },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-known-article-history',
+    kind: 'article_text',
+    text: '合成历史法条命题',
+    temporalContext: 'historical',
+    referenceDate: '2010-01-01',
+    knownSourceTitle: '中华人民共和国劳动合同法',
+    knownArticleNumber: '第十条',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.deepEqual(session.calls[0].request.arguments, {
+    fgmc: '中华人民共和国劳动合同法', ftnum: '第十条', refer_date: '2010-01-01',
+  })
+})
+
+test('historical statute sends refer_date only to detail', async () => {
   const { adapter, session } = harness([
     { tool: 'yuandian_rh_fg_search', result: statuteSearch('某合成法规') },
     { tool: 'yuandian_rh_fg_detail', result: statuteDetail({ fgmc: '某合成法规', versionDate: '2000-12-31' }) },
@@ -166,7 +278,13 @@ test('historical lookup sends refer_date to search and detail', async () => {
     referenceDate: '2001-01-01',
   })
   assert.equal(result.status, 'evidence_found')
-  assert.ok(session.calls.every((call) => call.request.arguments.refer_date === '2001-01-01'))
+  assert.equal(Object.hasOwn(session.calls[0].request.arguments, 'refer_date'), false)
+  assert.deepEqual(session.calls[0].request.arguments, {
+    fgmc: '某合成法规', top_k: KEYWORD_SEARCH_DEFAULT_TOP_K,
+  })
+  assert.deepEqual(session.calls[1].request.arguments, {
+    id: 'fg-synth-1', refer_date: '2001-01-01',
+  })
   assert.equal(result.provenance.requestedReferDate, '2001-01-01')
   assert.equal(result.provenance.resolvedVersionDate, '2000-12-31')
 })
@@ -332,6 +450,57 @@ test('all documented source mappings remain deterministic', () => {
   }
 })
 
+test('xljb_1 is the preferred authority-level response alias', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: articleDetail({ xljb_1: '行政法规', xljb: '法律' }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-xljb-1', kind: 'article_text', text: '合成法条',
+    knownSourceTitle: '中华人民共和国劳动合同法', knownArticleNumber: '第十条',
+  })
+  assert.equal(result.evidence[0].sourceType, 'administrative_regulation')
+  assert.equal(result.provenance.rawAuthorityLevel, '行政法规')
+})
+
+test('xljb_2 is a defensive fallback and preserves unknown values as other', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: articleDetail({ xljb_2: '合成二级效力类型', xljb: undefined }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-xljb-2', kind: 'article_text', text: '合成法条',
+    knownSourceTitle: '中华人民共和国劳动合同法', knownArticleNumber: '第十条',
+  })
+  assert.equal(result.evidence[0].sourceType, 'other')
+  assert.match(result.evidence[0].limitations, /rawAuthorityLevel: 合成二级效力类型/u)
+})
+
+test('ft_num response alias normalizes article number', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: articleDetail({ ftnum: undefined, ft_num: '第十条' }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-ft-num', kind: 'article_text', text: '合成法条',
+    knownSourceTitle: '中华人民共和国劳动合同法', knownArticleNumber: '第十条',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.match(result.evidence[0].supports, /第十条/u)
+})
+
+test('providerRecordId prefers canonical id over response aliases', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: articleDetail({ id: 'canonical-id', ftid: 'legacy-ftid', fgid: 'legacy-fgid' }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-id-priority', kind: 'article_text', text: '合成法条',
+    knownSourceTitle: '中华人民共和国劳动合同法', knownArticleNumber: '第十条',
+  })
+  assert.equal(result.provenance.providerRecordId, 'canonical-id')
+})
+
 test('missing detail jurisdiction warns and blocks jurisdiction-critical evidence', async () => {
   const { adapter } = harness([{ tool: 'yuandian_rh_ft_detail', result: articleDetail({ dy: undefined }) }])
   const result = await adapter.retrieve({
@@ -395,6 +564,11 @@ test('natural language proposition routes vector search then detail', async () =
   assert.deepEqual(session.calls.map((call) => call.request.name), [
     'yuandian_law_vector_search', 'yuandian_rh_ft_detail',
   ])
+  assert.deepEqual(session.calls[0].request.arguments, {
+    query: '合成法律命题', return_num: VECTOR_SEARCH_DEFAULT_RETURN_NUM,
+  })
+  assert.equal(Object.hasOwn(session.calls[0].request.arguments, 'refer_date'), false)
+  assert.deepEqual(session.calls[1].request.arguments, { id: 'ft-synth-10' })
 })
 
 test('keyword article claim routes article search then detail', async () => {
@@ -407,6 +581,68 @@ test('keyword article claim routes article search then detail', async () => {
   assert.deepEqual(session.calls.map((call) => call.request.name), [
     'yuandian_rh_ft_search', 'yuandian_rh_ft_detail',
   ])
+  assert.deepEqual(session.calls[0].request.arguments, {
+    keyword: '合成关键词', top_k: KEYWORD_SEARCH_DEFAULT_TOP_K,
+  })
+  assert.equal(Object.hasOwn(session.calls[0].request.arguments, 'ftnum'), false)
+  assert.deepEqual(session.calls[1].request.arguments, { id: 'ft-synth-10' })
+})
+
+test('observed five-tool runtime schema is compatible', () => {
+  const result = validateYuandianRuntimeSchema({ tools: observedRuntimeTools() })
+  assert.equal(result.compatible, true)
+  assert.deepEqual(result.missingTools, [])
+  assert.deepEqual(result.incompatibleTools, [])
+  assert.deepEqual(result.drift, [])
+})
+
+test('missing allowlisted runtime tool is incompatible', () => {
+  const tools = observedRuntimeTools().filter((tool) => tool.name !== 'yuandian_rh_fg_detail')
+  const result = validateYuandianRuntimeSchema(tools)
+  assert.equal(result.compatible, false)
+  assert.deepEqual(result.missingTools, ['yuandian_rh_fg_detail'])
+})
+
+test('additional remote tool and optional parameter remain compatible', () => {
+  const tools = observedRuntimeTools()
+  tools[0].inputSchema.properties.future_optional = property('string')
+  tools.push(runtimeTool('yuandian_get_user_balance', {}))
+  const result = validateYuandianRuntimeSchema(tools)
+  assert.equal(result.compatible, true)
+  assert.deepEqual(result.extraTools, ['yuandian_get_user_balance'])
+})
+
+test('required-field runtime drift is incompatible', () => {
+  const tools = observedRuntimeTools()
+  tools.find((tool) => tool.name === 'yuandian_rh_fg_search').inputSchema.required = ['fgmc']
+  const result = validateYuandianRuntimeSchema(tools)
+  assert.equal(result.compatible, false)
+  assert.ok(result.incompatibleTools.includes('yuandian_rh_fg_search'))
+})
+
+test('parameter-type runtime drift is incompatible', () => {
+  const tools = observedRuntimeTools()
+  tools.find((tool) => tool.name === 'yuandian_rh_ft_detail').inputSchema.properties.ftnum.type = 'number'
+  const result = validateYuandianRuntimeSchema(tools)
+  assert.equal(result.compatible, false)
+  assert.ok(result.incompatibleTools.includes('yuandian_rh_ft_detail'))
+})
+
+test('refer_date placement drift on search is incompatible', () => {
+  const tools = observedRuntimeTools()
+  tools.find((tool) => tool.name === 'yuandian_rh_fg_search').inputSchema.properties.refer_date = property('string')
+  const result = validateYuandianRuntimeSchema(tools)
+  assert.equal(result.compatible, false)
+  assert.ok(result.incompatibleTools.includes('yuandian_rh_fg_search'))
+})
+
+test('critical vector filter nested-type drift is incompatible', () => {
+  const tools = observedRuntimeTools()
+  const vector = tools.find((tool) => tool.name === 'yuandian_law_vector_search')
+  vector.inputSchema.properties.fatiao_filter.properties.sxx.items.type = 'number'
+  const result = validateYuandianRuntimeSchema(tools)
+  assert.equal(result.compatible, false)
+  assert.ok(result.incompatibleTools.includes('yuandian_law_vector_search'))
 })
 
 test('tool allowlist rejects yuandian-case before session creation', async () => {

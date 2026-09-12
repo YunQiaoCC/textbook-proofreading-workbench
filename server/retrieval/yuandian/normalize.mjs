@@ -77,7 +77,7 @@ export function detailRecord(payload) {
 
 function supportSummary(claim, title, record) {
   const quotedTitle = title.startsWith('《') ? title : `《${title}》`
-  const articleNumber = firstValue(record, ['ftnum', 'articleNumber']) ?? claim.knownArticleNumber
+  const articleNumber = firstValue(record, ['ftnum', 'ft_num', 'articleNumber']) ?? claim.knownArticleNumber
   const effectiveDate = firstValue(record, ['ssrq', 'effectiveDate'])
   const validity = firstValue(record, ['sxx', 'validityStatus', 'status'])
 
@@ -98,10 +98,15 @@ function supportSummary(claim, title, record) {
 
 export function normalizeYuandianDetail({ claim, record, searchCandidate, providerTool, retrievedAt }) {
   const warnings = []
-  const rawAuthorityLevel = firstValue(record, ['xljb', 'authorityLevel', 'sourceType'])
+  // xljb_1 is the observed first-level authority classification. xljb_2 is
+  // accepted only as a defensive fallback; unknown secondary values remain
+  // `other` rather than being coerced into a stronger source type.
+  const rawAuthorityLevel = firstValue(record, [
+    'xljb_1', 'xljb_2', 'xljb', 'authorityLevel', 'sourceType',
+  ])
   const mapping = mapYuandianSourceType(rawAuthorityLevel)
   const title = firstValue(record, ['fgmc', 'title', 'name'])
-  const articleNumber = firstValue(record, ['ftnum', 'articleNumber'])
+  const articleNumber = firstValue(record, ['ftnum', 'ft_num', 'articleNumber'])
   const detailJurisdiction = firstValue(record, ['dy', 'jurisdiction', 'location'])
   const candidateJurisdiction = firstValue(searchCandidate, ['dy', 'jurisdiction', 'location'])
   const publicationDate = firstValue(record, ['fbrq', 'publicationDate'])
@@ -154,7 +159,7 @@ export function normalizeYuandianDetail({ claim, record, searchCandidate, provid
   const provenance = compact({
     provider: 'yuandian-law',
     providerTool,
-    providerRecordId: firstValue(record, ['ftid', 'fgid', 'id']),
+    providerRecordId: firstValue(record, ['id', 'ftid', 'fgid']),
     retrievedAt,
     query: claim.knownSourceTitle ?? claim.text,
     referenceDate: claim.referenceDate,
