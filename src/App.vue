@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
-import { PdfAnnotator, type Annotation, type IAnnotationStore } from 'inklayer-vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { PdfAnnotator, type Annotation, type IAnnotationStore, useAnnotationStore } from 'inklayer-vue'
 import 'inklayer-vue/style'
 
 import DocumentUploader from './components/DocumentUploader.vue'
@@ -13,6 +13,13 @@ import type { ChapterInput } from './services/documentApi'
 import { useDocumentWorkspace } from './features/documents/useDocumentWorkspace'
 import { useProofreadingWorkspace } from './features/proofreading/useProofreadingWorkspace'
 import { annotationStoresToCore } from './utils/annotationAdapter'
+
+const LEFT_SIDEBAR_STORAGE_KEY = 'proofreading-ui:left-sidebar-collapsed:v1'
+
+function readLeftSidebarCollapsed() {
+  if (typeof window === 'undefined') return false
+  return window.localStorage.getItem(LEFT_SIDEBAR_STORAGE_KEY) === 'true'
+}
 
 const currentUser = { id: 'proofreader-demo', name: '校对员' }
 const documentStatusLabels = {
@@ -40,6 +47,9 @@ const {
   selectChapter,
   createChapter,
   updateChapter,
+  deletingDocumentId,
+  deleteError,
+  deleteDocumentById,
 } = useDocumentWorkspace()
 
 const {
@@ -56,6 +66,8 @@ const {
   selectIssue,
   updateIssue,
   updateIssueStatus,
+  deleteIssue,
+  flushPendingSave,
   handleAnnotationAdded,
   handleAnnotationDeleted,
   handleAnnotationSelected,
@@ -69,6 +81,15 @@ const {
   selectedChapterId,
   computed(() => selectedChapter.value?.startPdfPage ?? null),
 )
+
+const leftSidebarCollapsed = ref(readLeftSidebarCollapsed())
+const annotationStore = useAnnotationStore()
+
+watch(leftSidebarCollapsed, (collapsed) => {
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(LEFT_SIDEBAR_STORAGE_KEY, String(collapsed))
+  }
+})
 
 const pdfUrl = computed(() => selectedDocument.value ? documentFileUrl(selectedDocument.value.id) : '')
 const selectedDocumentStatus = computed(() => {
@@ -96,8 +117,25 @@ const inkLayerInitialAnnotations = computed(() => selectedChapter.value
 
 onMounted(() => { void loadDocuments() })
 
+function toggleLeftSidebar() {
+  leftSidebarCollapsed.value = !leftSidebarCollapsed.value
+}
+
 function onDocumentSelected(documentId: string) {
   void selectDocument(documentId)
+}
+
+async function onDocumentDelete(documentId: string) {
+  await flushPendingSave()
+  await deleteDocumentById(documentId)
+}
+
+function onIssueDeleted(issueId: string) {
+  const issue = issues.value.find((item) => item.id === issueId)
+  if (!issue) return
+  const annotation = annotations.value.find((item) => item.id === issue.annotationId)
+  if (annotation) annotationStore.painter?.delete(annotation.id, false)
+  deleteIssue(issueId)
 }
 
 function onDocumentUploaded(documentId: string) {
@@ -159,9 +197,9 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
       </div>
     </header>
 
-      <div class="workspace-grid">
-      <div class="outline-column">
-        <DocumentUploader @completed="onDocumentUploaded" />
+      <div class="workspace-grid" :class="{ 'left-sidebar-collapsed': leftSidebarCollapsed }">
+      <div class="outline-column" :class="{ collapsed: leftSidebarCollapsed }">
+        <div class="outline-uploader"><DocumentUploader @completed="onDocumentUploaded" /></div>
         <DocumentOutline
           :documents="documents"
           :selected-document-id="selectedDocumentId"
@@ -171,11 +209,26 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
           :chapter-loading="chapterLoading"
           :error="error"
           :chapter-error="chapterError"
+          :collapsed="leftSidebarCollapsed"
+          :deleting-document-id="deletingDocumentId"
+          :delete-error="deleteError"
           @select="onDocumentSelected"
           @select-chapter="onChapterSelected"
           @create-chapter="onChapterCreated"
           @update-chapter="onChapterUpdated"
+          @delete-document="onDocumentDelete"
         />
+        <button
+          class="sidebar-toggle"
+          type="button"
+          :aria-label="leftSidebarCollapsed ? '\u5c55\u5f00\u76ee\u5f55' : '\u6536\u8d77\u76ee\u5f55'"
+          :title="leftSidebarCollapsed ? '\u5c55\u5f00\u76ee\u5f55' : '\u6536\u8d77\u76ee\u5f55'"
+          @click="toggleLeftSidebar"
+        >
+          <span aria-hidden="true" v-if="leftSidebarCollapsed">&rsaquo;</span>
+          <span aria-hidden="true" v-else>&lsaquo;</span>
+          <span class="sidebar-toggle-label">{{ leftSidebarCollapsed ? '\u5c55\u5f00\u76ee\u5f55' : '\u6536\u8d77\u76ee\u5f55' }}</span>
+        </button>
       </div>
 
       <section class="reader-panel" aria-label="PDF 阅读器">
@@ -237,6 +290,7 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
             :issue="selectedIssue"
             @update="updateIssue"
             @status="updateIssueStatus"
+            @delete="onIssueDeleted"
           />
         </template>
         <div v-else class="review-empty">
@@ -310,8 +364,17 @@ button { cursor: pointer; }
 .header-button:hover { background: #30405d; }
 .user-avatar { display: grid; width: 28px; height: 28px; place-items: center; color: #172033; font-weight: 700; font-size: 11px; background: #e2c58f; border-radius: 50%; }
 
-.workspace-grid { display: grid; flex: 1; grid-template-columns: 220px minmax(480px, 1fr) 390px; min-height: 0; }
-.outline-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #f8f9fb; }
+.workspace-grid { --left-sidebar-width: 260px; display: grid; flex: 1; grid-template-columns: var(--left-sidebar-width) minmax(480px, 1fr) 390px; min-height: 0; transition: grid-template-columns .18s ease; }
+.workspace-grid.left-sidebar-collapsed { --left-sidebar-width: 48px; }
+.outline-column { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #f8f9fb; }
+.outline-uploader { overflow: hidden; transition: opacity .15s ease, visibility .15s ease, height .18s ease; }
+.outline-column.collapsed .outline-uploader { height: 0; opacity: 0; visibility: hidden; pointer-events: none; }
+.outline-column.collapsed .outline-panel { padding: 0; }
+.sidebar-toggle { position: absolute; top: 12px; right: -13px; z-index: 50; display: inline-flex; align-items: center; gap: 3px; min-height: 28px; padding: 5px 7px; color: #61718a; font-size: 10px; background: #fff; border: 1px solid #cfd8e4; border-radius: 6px; box-shadow: 0 3px 8px rgba(31, 42, 61, .12); }
+.sidebar-toggle:hover { color: #30496d; background: #f4f7fb; }
+.sidebar-toggle-label { white-space: nowrap; }
+.outline-column.collapsed .sidebar-toggle { right: -10px; width: 28px; justify-content: center; padding: 5px 4px; font-size: 17px; }
+.outline-column.collapsed .sidebar-toggle-label { display: none; }
 .outline-column > .outline-panel { flex: 1; min-height: 0; }
 .reader-panel, .review-panel { min-width: 0; min-height: 0; }
 .reader-panel { display: flex; flex-direction: column; padding: 15px 16px 16px; background: #e9edf3; }
@@ -333,7 +396,8 @@ button { cursor: pointer; }
 .reader-empty-icon { display: grid; width: 42px; height: 42px; place-items: center; color: #7894b7; font-size: 11px; font-weight: 700; background: #eef4fb; border-radius: 50%; }
 
 @media (max-width: 1320px) {
-  .workspace-grid { grid-template-columns: 200px minmax(440px, 1fr) 360px; }
+  .workspace-grid { --left-sidebar-width: 250px; grid-template-columns: var(--left-sidebar-width) minmax(440px, 1fr) 360px; }
+  .workspace-grid.left-sidebar-collapsed { --left-sidebar-width: 48px; }
   .reader-hint { display: none; }
 }
 </style>

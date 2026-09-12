@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { HttpError } from './uploadSessionService.mjs'
+import { DocumentNotFoundError } from './documentLifecycleCoordinator.mjs'
 
 const SAFE_IDENTIFIER = /^[A-Za-z0-9-]+$/
 const CHAPTER_STATUSES = new Set(['unassigned', 'not_started', 'in_progress', 'completed'])
@@ -152,7 +153,14 @@ export class ChapterService {
       createdAt: now,
       updatedAt: now,
     }
-    await this.documentRepository.saveChapter(documentId, chapter)
+    try {
+      await this.documentRepository.saveChapter(documentId, chapter)
+    } catch (error) {
+      if (error instanceof DocumentNotFoundError) {
+        throw new HttpError(404, 'document_not_found', 'document not found')
+      }
+      throw error
+    }
     return publicChapter(chapter)
   }
 
@@ -168,7 +176,14 @@ export class ChapterService {
       createdAt: current.createdAt ?? this.now().toISOString(),
       updatedAt: this.now().toISOString(),
     }
-    await this.documentRepository.saveChapter(documentId, chapter)
+    try {
+      await this.documentRepository.saveChapter(documentId, chapter)
+    } catch (error) {
+      if (error instanceof DocumentNotFoundError) {
+        throw new HttpError(404, 'document_not_found', 'document not found')
+      }
+      throw error
+    }
     return publicChapter(chapter)
   }
 }

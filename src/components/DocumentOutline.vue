@@ -11,6 +11,9 @@ const props = defineProps<{
   chapterLoading: boolean
   error: string
   chapterError: string
+  collapsed: boolean
+  deletingDocumentId: string | null
+  deleteError: string
 }>()
 
 const emit = defineEmits<{
@@ -18,6 +21,7 @@ const emit = defineEmits<{
   selectChapter: [chapterId: string]
   createChapter: [payload: ChapterInput, onSuccess: () => void]
   updateChapter: [chapterId: string, payload: ChapterInput, onSuccess: () => void]
+  deleteDocument: [documentId: string]
 }>()
 
 const selectedDocument = computed(() =>
@@ -43,6 +47,11 @@ const documentStatusLabels = {
 const statusOptions = Object.entries(statusLabels) as Array<[ApiChapter['status'], string]>
 const formOpen = ref(false)
 const formSubmitting = ref(false)
+const deleteTarget = ref<ApiDocument | null>(null)
+const deleteConfirmation = ref('')
+const deleteConfirmationMatches = computed(() =>
+  Boolean(deleteTarget.value && deleteConfirmation.value === deleteTarget.value.title),
+)
 const drawerRef = ref<HTMLElement | null>(null)
 const editingChapterId = ref<string | null>(null)
 const form = reactive<ChapterInput>({
@@ -113,12 +122,40 @@ function submitForm() {
   else emit('createChapter', payload, onSuccess)
 }
 
+function openDelete(document: ApiDocument) {
+  if (props.deletingDocumentId) return
+  deleteTarget.value = document
+  deleteConfirmation.value = ''
+}
+
+function closeDelete() {
+  if (props.deletingDocumentId) return
+  deleteTarget.value = null
+  deleteConfirmation.value = ''
+}
+
+function submitDelete() {
+  if (!deleteTarget.value || !deleteConfirmationMatches.value || props.deletingDocumentId) return
+  emit('deleteDocument', deleteTarget.value.id)
+}
+
 function onGlobalKeydown(event: KeyboardEvent) {
+  if (deleteTarget.value && event.key === 'Escape' && !props.deletingDocumentId) {
+    event.preventDefault()
+    closeDelete()
+    return
+  }
   if (formOpen.value && event.key === 'Escape' && !formSubmitting.value) {
     event.preventDefault()
     closeForm()
   }
 }
+
+watch(() => props.documents, (documents) => {
+  if (deleteTarget.value && !documents.some((document) => document.id === deleteTarget.value?.id) && !props.deletingDocumentId) {
+    closeDelete()
+  }
+})
 
 watch(() => props.chapterError, (error) => {
   if (error) formSubmitting.value = false
@@ -130,24 +167,33 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
 </script>
 
 <template>
-  <aside class="outline-panel">
+  <aside class="outline-panel" :class="{ collapsed }">
     <div class="outline-heading">
       <div><span class="panel-kicker">DOCUMENT</span><h2>教材目录</h2></div>
       <span class="document-count">{{ documents.length }}</span>
     </div>
 
     <div v-if="documents.length" class="document-list" aria-label="文档列表">
-      <button
-        v-for="document in documents"
-        :key="document.id"
-        class="document-option"
-        :class="{ active: selectedDocumentId === document.id }"
-        type="button"
-        @click="emit('select', document.id)"
-      >
-        <strong>{{ document.title }}</strong>
-        <span>{{ document.pageCount }} 页 · {{ documentStatusLabel(document.processingStatus) }}</span>
-      </button>
+      <div v-for="document in documents" :key="document.id" class="document-item">
+        <button
+          class="document-option"
+          :class="{ active: selectedDocumentId === document.id }"
+          type="button"
+          :disabled="Boolean(deletingDocumentId)"
+          @click="emit('select', document.id)"
+        >
+          <strong>{{ document.title }}</strong>
+          <span>{{ document.pageCount }} &#39029; &#183; {{ documentStatusLabel(document.processingStatus) }}</span>
+        </button>
+        <button
+          class="document-delete"
+          type="button"
+          :disabled="Boolean(deletingDocumentId)"
+          aria-label="&#21024;&#38500;&#25945;&#26448;"
+          title="&#21024;&#38500;&#25945;&#26448;"
+          @click.stop="openDelete(document)"
+        >&#8943;</button>
+      </div>
     </div>
     <div v-else class="empty-document">
       <strong>尚未上传教材</strong>
@@ -225,6 +271,24 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
       <div class="team-avatars"><span class="mini-avatar gold">校</span><span class="mini-avatar blue">复</span><span class="mini-avatar gray">+2</span></div>
       <span class="team-note">负责人仅为分工信息</span>
     </div>
+    <Teleport to="body">
+      <div v-if="deleteTarget" class="document-delete-backdrop">
+        <section class="document-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="document-delete-title">
+          <h2 id="document-delete-title">&#21024;&#38500;&#25945;&#26448;</h2>
+          <p class="document-delete-target">{{ deleteTarget.title }}</p>
+          <p>&#23558;&#21024;&#38500;&#35813;&#25945;&#26448;&#12289;&#31456;&#33410;&#21450;&#26657;&#23545;&#24847;&#35265;&#12290;&#27492;&#25805;&#20316;&#19981;&#33021;&#20174;&#24037;&#20316;&#21488;&#25764;&#38144;&#12290;</p>
+          <p>&#21382;&#21490;&#22791;&#20221;&#21487;&#33021;&#26242;&#26102;&#20445;&#30041;&#21103;&#26412;&#12290;</p>
+          <label class="document-delete-label">&#35831;&#36755;&#20837;&#23436;&#25972;&#25945;&#26448;&#26631;&#39064;&#25110;&#25991;&#20214;&#21517;
+            <input v-model="deleteConfirmation" type="text" autocomplete="off" :disabled="Boolean(deletingDocumentId)" />
+          </label>
+          <p v-if="deleteError" class="document-delete-error" role="alert">{{ deleteError }}</p>
+          <div class="document-delete-actions">
+            <button type="button" :disabled="Boolean(deletingDocumentId)" @click="closeDelete">&#21462;&#28040;</button>
+            <button class="danger" type="button" :disabled="!deleteConfirmationMatches || Boolean(deletingDocumentId)" @click="submitDelete">{{ deletingDocumentId ? '&#21024;&#38500;&#20013;&#8230;' : '&#30830;&#35748;&#21024;&#38500;' }}</button>
+          </div>
+        </section>
+      </div>
+    </Teleport>
   </aside>
 </template>
 
@@ -299,4 +363,25 @@ h2 { margin: 4px 0 0; color: #253047; font-size: 17px; }
 .mini-avatar { display: grid; width: 23px; height: 23px; place-items: center; margin-right: -4px; color: #fff; font-size: 9px; border: 2px solid #f8f9fb; border-radius: 50%; }
 .mini-avatar.gold { background: #b68c4c; } .mini-avatar.blue { background: #6681a8; } .mini-avatar.gray { background: #9ca8b9; }
 .team-note { margin-left: auto; color: #a2aab7; font-size: 8px; }
+
+.outline-panel.collapsed > :not(.chapter-drawer) { opacity: 0; visibility: hidden; pointer-events: none; }
+.document-item { display: flex; align-items: stretch; min-width: 0; }
+.document-item .document-option { flex: 1; min-width: 0; }
+.document-delete { width: 24px; padding: 0; color: #a7afbb; font-size: 16px; line-height: 1; background: transparent; border: 0; border-radius: 5px; opacity: 0; }
+.document-item:hover .document-delete, .document-delete:focus { opacity: 1; }
+.document-delete:hover { color: #8f5c64; background: #fff3f4; }
+.document-delete:disabled { cursor: wait; opacity: .35; }
+.document-delete-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(23, 32, 51, .3); }
+.document-delete-dialog { width: min(410px, calc(100vw - 40px)); padding: 21px; color: #68758b; background: #fff; border: 1px solid #dfe4eb; border-radius: 11px; box-shadow: 0 18px 52px rgba(23, 32, 51, .22); }
+.document-delete-dialog h2 { margin: 0 0 12px; font-size: 16px; }
+.document-delete-dialog p { margin: 7px 0; font-size: 11px; line-height: 1.55; }
+.document-delete-target { color: #2f405e; font-size: 13px !important; font-weight: 700; }
+.document-delete-label { display: flex; flex-direction: column; gap: 6px; margin-top: 15px; color: #68758b; font-size: 10px; font-weight: 600; }
+.document-delete-label input { width: 100%; padding: 9px 10px; color: #33425b; font-size: 12px; background: #fbfcfd; border: 1px solid #d6dfe9; border-radius: 6px; }
+.document-delete-label input:focus { border-color: #6d8fb9; outline: 2px solid rgba(109, 143, 185, .18); }
+.document-delete-error { padding: 8px 9px; color: #a44e4e; background: #fff2f0; border: 1px solid #f0c9c3; border-radius: 5px; }
+.document-delete-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 18px; }
+.document-delete-actions button { min-width: 76px; padding: 8px 12px; color: #66758a; font-size: 11px; background: #fff; border: 1px solid #d6dfe9; border-radius: 6px; }
+.document-delete-actions button:disabled { cursor: wait; opacity: .55; }
+.document-delete-actions .danger { color: #fff; background: #8a5963; border-color: #8a5963; }
 </style>

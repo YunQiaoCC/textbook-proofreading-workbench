@@ -89,4 +89,12 @@ export function saveProofreadingClientState(documentId: string, chapterId: strin
   writeJson(clientStorageKey(documentId, chapterId), state)
 }
 
+export function clearProofreadingClientState(documentId: string) {
+  if (typeof window === 'undefined') return
+  const prefix = 'proofreading-client:v3:' + encodedDocumentId(documentId) + ':'
+  for (const key of Object.keys(window.localStorage)) {
+    if (key.startsWith(prefix)) window.localStorage.removeItem(key)
+  }
+}
+
 export { emptyWorkspace }

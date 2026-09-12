@@ -1,15 +1,25 @@
-import { readdir } from 'node:fs/promises'
+import { readdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { atomicWriteJson, ensureDirectory, readJson } from '../utils/fs.mjs'
+import { DocumentLifecycleCoordinator, DocumentNotFoundError } from '../services/documentLifecycleCoordinator.mjs'
+
+function isWithinRoot(root, candidate) {
+  const relative = path.relative(root, candidate)
+  return relative === '' || (
+    relative !== '..' &&
+    !relative.startsWith('..' + path.sep) &&
+    !path.isAbsolute(relative)
+  )
+}
 
 function validIdentifier(value) {
   return typeof value === 'string' && /^[A-Za-z0-9-]+$/.test(value)
 }
 
 export class FileBackedDocumentRepository {
-  constructor(storageRoot) {
-    this.metadataRoot = path.join(storageRoot, 'metadata', 'documents')
-    this.locks = new Map()
+  constructor(storageRoot, { lifecycleCoordinator = new DocumentLifecycleCoordinator() } = {}) {
+    this.metadataRoot = path.resolve(storageRoot, 'metadata', 'documents')
+    this.lifecycleCoordinator = lifecycleCoordinator
   }
 
   async init() {
@@ -20,7 +30,11 @@ export class FileBackedDocumentRepository {
     if (!validIdentifier(documentId)) {
       throw new Error('Invalid document identifier')
     }
-    return path.join(this.metadataRoot, `${documentId}.json`)
+    const recordPath = path.resolve(this.metadataRoot, documentId + '.json')
+    if (!isWithinRoot(this.metadataRoot, recordPath)) {
+      throw new Error('Document metadata path escapes root')
+    }
+    return recordPath
   }
 
   async readRecord(documentId) {
@@ -42,39 +56,48 @@ export class FileBackedDocumentRepository {
     })
   }
 
-  async saveBundle({ document, asset, pages, chapters = [], inspectionSummary = null }) {
-    await this.writeRecord({ document, asset, pages, chapters, inspectionSummary })
+  async saveBundle({ document, asset, pages, chapters = [], inspectionSummary = null, requireExisting = false }) {
+    return this.withDocumentLock(document.id, async () => {
+      if (requireExisting && !(await this.readRecord(document.id))) {
+        throw new DocumentNotFoundError(document.id)
+      }
+      await this.writeRecord({ document, asset, pages, chapters, inspectionSummary })
+    })
   }
 
   async save(document) {
-    const existing = await this.readRecord(document.id)
-    await this.writeRecord({
-      ...(existing ?? {}),
-      document,
+    return this.withDocumentLock(document.id, async () => {
+      const existing = await this.readRecord(document.id)
+      if (!existing) throw new DocumentNotFoundError(document.id)
+      await this.writeRecord({
+        ...existing,
+        document,
+      })
     })
   }
 
   async saveAsset(asset) {
-    const existing = await this.readRecord(asset.documentId)
-    if (!existing) throw new Error(`Document metadata not found: ${asset.documentId}`)
-    await this.writeRecord({ ...existing, asset })
+    return this.withDocumentLock(asset.documentId, async () => {
+      const existing = await this.readRecord(asset.documentId)
+      if (!existing) throw new DocumentNotFoundError(asset.documentId)
+      await this.writeRecord({ ...existing, asset })
+    })
   }
 
   async savePages(documentId, pages) {
-    const existing = await this.readRecord(documentId)
-    if (!existing) throw new Error(`Document metadata not found: ${documentId}`)
-    await this.writeRecord({ ...existing, pages })
+    return this.withDocumentLock(documentId, async () => {
+      const existing = await this.readRecord(documentId)
+      if (!existing) throw new DocumentNotFoundError(documentId)
+      await this.writeRecord({ ...existing, pages })
+    })
   }
 
   async withDocumentLock(documentId, operation) {
-    const previous = this.locks.get(documentId) ?? Promise.resolve()
-    const current = previous.catch(() => undefined).then(operation)
-    this.locks.set(documentId, current)
-    try {
-      return await current
-    } finally {
-      if (this.locks.get(documentId) === current) this.locks.delete(documentId)
-    }
+    return this.lifecycleCoordinator.withDocumentLock(documentId, operation)
+  }
+
+  async removeDocumentRecord(documentId) {
+    await rm(this.recordPath(documentId), { force: true })
   }
 
   async getById(documentId) {
@@ -86,8 +109,12 @@ export class FileBackedDocumentRepository {
     const documents = []
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith('.json')) continue
-      const record = await readJson(path.join(this.metadataRoot, entry.name))
-      if (record.document) documents.push(record.document)
+      try {
+        const record = await readJson(path.join(this.metadataRoot, entry.name))
+        if (record.document) documents.push(record.document)
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error
+      }
     }
     return documents.sort((left, right) => {
       const byCreatedAt = String(left.createdAt ?? '').localeCompare(String(right.createdAt ?? ''))
@@ -115,7 +142,7 @@ export class FileBackedDocumentRepository {
   async saveChapter(documentId, chapter) {
     return this.withDocumentLock(documentId, async () => {
       const existing = await this.readRecord(documentId)
-      if (!existing) throw new Error(`Document metadata not found: ${documentId}`)
+      if (!existing) throw new DocumentNotFoundError(documentId)
       const chapters = existing.chapters ?? []
       const index = chapters.findIndex((item) => item.id === chapter.id)
       const nextChapters = index === -1

@@ -1,5 +1,6 @@
 import { HttpError } from './uploadSessionService.mjs'
 import { ProofreadingRevisionConflictError } from '../repositories/fileBackedProofreadingRepository.mjs'
+import { DocumentNotFoundError } from './documentLifecycleCoordinator.mjs'
 
 export const MAX_PROOFREADING_BODY_BYTES = 8 * 1024 * 1024
 
@@ -174,6 +175,9 @@ export class ProofreadingService {
     try {
       return await this.proofreadingRepository.save(documentId, payload, payload.baseRevision)
     } catch (error) {
+      if (error instanceof DocumentNotFoundError) {
+        throw new HttpError(404, 'document_not_found', 'document not found')
+      }
       if (error instanceof ProofreadingRevisionConflictError) {
         throw new HttpError(
           409,
@@ -203,6 +207,9 @@ export class ProofreadingService {
         payload.baseRevision,
       )
     } catch (error) {
+      if (error instanceof DocumentNotFoundError) {
+        throw new HttpError(404, 'document_not_found', 'document not found')
+      }
       if (error instanceof ProofreadingRevisionConflictError) {
         throw new HttpError(
           409,

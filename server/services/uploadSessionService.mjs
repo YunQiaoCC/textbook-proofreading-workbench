@@ -378,7 +378,7 @@ export class UploadSessionService {
           processingStatus: 'inspecting',
           updatedAt: this.now().toISOString(),
         }
-        await this.documentRepository.saveBundle({ document, asset, pages: [], inspectionSummary: null })
+        await this.documentRepository.saveBundle({ document, asset, pages: [], inspectionSummary: null, requireExisting: true })
 
         try {
           const report = await this.inspectionService.inspect(this.documentStorage.resolveAbsolutePath(asset))
@@ -410,7 +410,7 @@ export class UploadSessionService {
           return { uploadSession: publicSession(session), document, asset, inspectionSummary }
         } catch (error) {
           document = { ...document, processingStatus: 'failed', updatedAt: this.now().toISOString() }
-          await this.documentRepository.saveBundle({ document, asset, pages: [], inspectionSummary: null })
+          await this.documentRepository.saveBundle({ document, asset, pages: [], inspectionSummary: null, requireExisting: true })
           session.errorMessage = error instanceof Error ? error.message : String(error)
           await this.saveSession(session)
           return { uploadSession: publicSession(session), document, asset, inspectionError: session.errorMessage }

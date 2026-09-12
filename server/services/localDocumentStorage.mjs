@@ -25,6 +25,19 @@ export class LocalDocumentStorage {
     await ensureDirectory(this.documentsRoot)
   }
 
+  documentDirectory(documentId) {
+    if (!isSafeSegment(documentId)) throw new Error('Invalid document identifier')
+    const directory = path.resolve(this.documentsRoot, documentId)
+    if (!isWithinRoot(this.documentsRoot, directory)) {
+      throw new Error('Document directory escapes local storage root')
+    }
+    return directory
+  }
+
+  async removeDocument(documentId) {
+    await rm(this.documentDirectory(documentId), { recursive: true, force: true })
+  }
+
   absolutePathForKey(storageKey) {
     if (typeof storageKey !== 'string' || path.isAbsolute(storageKey)) {
       throw new Error('Storage key must be relative')

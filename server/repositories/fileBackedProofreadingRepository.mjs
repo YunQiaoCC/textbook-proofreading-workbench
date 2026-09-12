@@ -1,5 +1,7 @@
 import path from 'node:path'
+import { rm } from 'node:fs/promises'
 import { atomicWriteJson, ensureDirectory, readJson } from '../utils/fs.mjs'
+import { DocumentLifecycleCoordinator, DocumentNotFoundError } from '../services/documentLifecycleCoordinator.mjs'
 
 function validDocumentId(value) {
   return typeof value === 'string' && /^[A-Za-z0-9-]+$/.test(value)
@@ -27,10 +29,11 @@ export class ProofreadingRevisionConflictError extends Error {
 }
 
 export class FileBackedProofreadingRepository {
-  constructor(storageRoot, { now = () => new Date() } = {}) {
+  constructor(storageRoot, { now = () => new Date(), lifecycleCoordinator = new DocumentLifecycleCoordinator(), documentExists = null } = {}) {
     this.metadataRoot = path.resolve(storageRoot, 'metadata', 'proofreading')
     this.now = now
-    this.locks = new Map()
+    this.lifecycleCoordinator = lifecycleCoordinator
+    this.documentExists = documentExists
   }
 
   async init() {
@@ -66,24 +69,28 @@ export class FileBackedProofreadingRepository {
   }
 
   async withWorkspaceLock(lockKey, operation) {
-    const previous = this.locks.get(lockKey) ?? Promise.resolve()
-    const current = previous.catch(() => undefined).then(operation)
-    this.locks.set(lockKey, current)
-    try {
-      return await current
-    } finally {
-      if (this.locks.get(lockKey) === current) this.locks.delete(lockKey)
+    const [scope, documentId] = String(lockKey).split(':')
+    if ((scope === 'document' || scope === 'chapter') && documentId) {
+      return this.lifecycleCoordinator.withDocumentLock(documentId, operation)
     }
+    throw new Error('Invalid proofreading lock key')
   }
 
   async withDocumentLock(documentId, operation) {
     return this.withWorkspaceLock(`document:${documentId}`, operation)
   }
 
+  async ensureDocumentExists(documentId) {
+    if (this.documentExists && !(await this.documentExists(documentId))) {
+      throw new DocumentNotFoundError(documentId)
+    }
+  }
+
   async save(documentId, workspace, expectedRevision) {
     // Legacy/document-scope record retained for compatibility.
     this.recordPath(documentId)
     return this.withDocumentLock(documentId, async () => {
+      await this.ensureDocumentExists(documentId)
       const current = await this.get(documentId)
       const currentRevision = current?.revision ?? 0
       if (expectedRevision !== currentRevision) {
@@ -116,7 +123,8 @@ export class FileBackedProofreadingRepository {
 
   async saveChapter(documentId, chapterId, workspace, expectedRevision) {
     const recordPath = this.chapterRecordPath(documentId, chapterId)
-    return this.withWorkspaceLock(`chapter:${documentId}:${chapterId}`, async () => {
+    return this.withWorkspaceLock('chapter:' + documentId + ':' + chapterId, async () => {
+      await this.ensureDocumentExists(documentId)
       const current = await this.getChapter(documentId, chapterId)
       const currentRevision = current?.revision ?? 0
       if (expectedRevision !== currentRevision) {
@@ -137,5 +145,14 @@ export class FileBackedProofreadingRepository {
       await atomicWriteJson(recordPath, nextWorkspace)
       return nextWorkspace
     })
+  }
+
+  async removeDocumentFiles(documentId) {
+    await rm(this.recordPath(documentId), { force: true })
+    const chapterDirectory = path.resolve(this.metadataRoot, documentId)
+    if (!isWithinRoot(this.metadataRoot, chapterDirectory)) {
+      throw new Error('Proofreading metadata path escapes root')
+    }
+    await rm(chapterDirectory, { recursive: true, force: true })
   }
 }

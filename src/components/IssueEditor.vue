@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import { issueCategories, issueStatuses, type ProofreadingIssue, type ProofreadingIssuePatch, type IssueStatus } from '../models/proofreading'
 
 const props = defineProps<{ issue: ProofreadingIssue | null }>()
-const emit = defineEmits<{ update: [id: string, patch: ProofreadingIssuePatch]; status: [id: string, status: IssueStatus] }>()
+const emit = defineEmits<{ update: [id: string, patch: ProofreadingIssuePatch]; status: [id: string, status: IssueStatus]; delete: [id: string] }>()
 
 const draft = reactive<ProofreadingIssue>({
   id: '', annotationId: '', pdfPage: 1, printedPage: '', originalText: '', category: 'other',
@@ -11,6 +11,22 @@ const draft = reactive<ProofreadingIssue>({
 })
 
 watch(() => props.issue, (issue) => { if (issue) Object.assign(draft, issue) }, { immediate: true })
+const deleteDialogOpen = ref(false)
+
+function openDeleteDialog() {
+  if (props.issue) deleteDialogOpen.value = true
+}
+
+function closeDeleteDialog() {
+  deleteDialogOpen.value = false
+}
+
+function confirmDelete() {
+  if (!props.issue) return
+  emit('delete', props.issue.id)
+  deleteDialogOpen.value = false
+}
+
 
 function commit() {
   if (!props.issue) return
@@ -65,8 +81,23 @@ function setStatus(status: IssueStatus) {
         </div>
       </div>
 
-      <div class="editor-footer"><span class="autosave-note"><span>●</span> 修改自动保存到服务器</span><button class="save-button" type="button" @click="commit">保存意见</button></div>
+      <div class="editor-footer"><span class="autosave-note"><span>&#9679;</span> &#20462;&#25913;&#33258;&#21160;&#20445;&#23384;&#21040;&#26381;&#21153;&#22120;</span><div class="editor-footer-actions"><button class="delete-issue-button" type="button" @click="openDeleteDialog">&#21024;&#38500;&#24847;&#35265;</button><button class="save-button" type="button" @click="commit">&#20445;&#23384;&#24847;&#35265;</button></div></div>
     </template>
+
+    <Teleport to="body">
+      <div v-if="deleteDialogOpen" class="issue-delete-backdrop">
+        <section class="issue-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="issue-delete-title">
+          <h2 id="issue-delete-title">&#21024;&#38500;&#36825;&#26465;&#26657;&#23545;&#24847;&#35265;&#65311;</h2>
+          <p>PDF &#31532; {{ issue?.pdfPage }} &#39029;</p>
+          <p v-if="issue?.originalText" class="issue-delete-quote">&#8220;{{ issue.originalText }}&#8221;</p>
+          <p>&#20851;&#32852;&#30340; PDF &#26631;&#27880;&#20063;&#20250;&#19968;&#24182;&#21024;&#38500;&#12290;</p>
+          <div class="issue-delete-actions">
+            <button type="button" class="issue-delete-cancel" @click="closeDeleteDialog">&#21462;&#28040;</button>
+            <button type="button" class="issue-delete-confirm" @click="confirmDelete">&#30830;&#35748;&#21024;&#38500;</button>
+          </div>
+        </section>
+      </div>
+    </Teleport>
   </section>
 </template>
 
@@ -96,4 +127,17 @@ h2 { margin: 4px 0 0; color: #263149; font-size: 16px; }
 .editor-empty { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 30px; color: #a1aab7; text-align: center; }
 .editor-empty-icon { display: grid; width: 38px; height: 38px; margin-bottom: 4px; place-items: center; color: #7894b7; font-size: 17px; background: #eef4fb; border-radius: 50%; }
 .editor-empty strong { color: #69778c; font-size: 11px; } .editor-empty span { max-width: 190px; font-size: 10px; line-height: 1.5; }
+
+.editor-footer-actions { display: flex; align-items: center; gap: 8px; }
+.delete-issue-button { padding: 7px 9px; color: #8b6870; font-size: 10px; background: transparent; border: 1px solid #eadfe2; border-radius: 5px; }
+.delete-issue-button:hover { color: #8f4f59; background: #fff7f8; border-color: #d9b9bf; }
+.issue-delete-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: rgba(23, 32, 51, .28); }
+.issue-delete-dialog { width: min(360px, calc(100vw - 40px)); padding: 20px; color: #657188; background: #fff; border: 1px solid #dfe4eb; border-radius: 10px; box-shadow: 0 16px 40px rgba(23, 32, 51, .2); }
+.issue-delete-dialog h2 { margin: 0 0 12px; font-size: 15px; }
+.issue-delete-dialog p { margin: 7px 0; font-size: 11px; line-height: 1.5; }
+.issue-delete-quote { color: #49566b; }
+.issue-delete-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.issue-delete-cancel, .issue-delete-confirm { padding: 7px 12px; font-size: 10px; border-radius: 5px; }
+.issue-delete-cancel { color: #68758b; background: #f6f8fa; border: 1px solid #dde3ea; }
+.issue-delete-confirm { color: #fff; background: #8a5963; border: 1px solid #8a5963; }
 </style>

@@ -12,6 +12,7 @@ import {
   saveProofreadingClientState,
 } from '../../services/proofreadingStorage'
 import type { ProofreadingIssue, ProofreadingIssuePatch, IssueStatus } from '../../models/proofreading'
+import { deleteIssueSnapshot } from './issueDeletion'
 import { exportProofreadingCsv } from '../../services/proofreadingExport'
 import {
   annotationToIssue,
@@ -32,6 +33,7 @@ function readableError(error: unknown, fallback: string) {
   if (!(error instanceof ApiError)) return fallback
   if (error.code === 'network_error') return '网络错误，请检查连接'
   if (error.code === 'issue_outside_chapter_range') return '意见页码不在本章 PDF 范围内，请检查页码。'
+  if (error.code === 'document_not_found') return 'document no longer exists'
   if (error.status === 409 || error.code === 'proofreading_revision_conflict') {
     return '检测到其他窗口中的更新，请重新加载最新校对数据。'
   }
@@ -335,13 +337,30 @@ export function useProofreadingWorkspace(
 
   function handleAnnotationDeleted(annotationId: string) {
     if (!hasActiveScope()) return
-    annotations.value = annotations.value.filter((annotation) => annotation.id !== annotationId)
-    issues.value = issues.value.filter((issue) => issue.annotationId !== annotationId)
-    if (!selectedIssue.value) {
-      selectedIssueId.value = issues.value[0]?.id ?? null
-      persistClientState()
+    const linkedIssue = issues.value.find((issue) => issue.annotationId === annotationId)
+    if (linkedIssue) {
+      const next = deleteIssueSnapshot(issues.value, annotations.value, selectedIssueId.value, linkedIssue.id)
+      issues.value = next.issues
+      annotations.value = next.annotations
+      selectedIssueId.value = next.selectedIssueId
+    } else {
+      annotations.value = annotations.value.filter((annotation) => annotation.id !== annotationId)
+      if (!selectedIssue.value) selectedIssueId.value = issues.value[0]?.id ?? null
     }
+    persistClientState()
     scheduleServerSave()
+  }
+
+  function deleteIssue(issueId: string) {
+    if (!hasActiveScope()) return null
+    const next = deleteIssueSnapshot(issues.value, annotations.value, selectedIssueId.value, issueId)
+    if (!next.deleted) return null
+    issues.value = next.issues
+    annotations.value = next.annotations
+    selectedIssueId.value = next.selectedIssueId
+    persistClientState()
+    scheduleServerSave()
+    return next.linkedAnnotationId
   }
 
   function handleAnnotationSelected(annotation: InkLayerAnnotationValue | null) {
@@ -385,6 +404,7 @@ export function useProofreadingWorkspace(
     revision,
     conflict,
     addManualIssue,
+    deleteIssue,
     selectIssue,
     updateIssue,
     updateIssueStatus,
@@ -393,6 +413,7 @@ export function useProofreadingWorkspace(
     handleAnnotationSelected,
     handleAnnotationUpdated,
     handleSave,
+    flushPendingSave,
     reload,
     exportIssues: () => exportProofreadingCsv(issues.value),
   }

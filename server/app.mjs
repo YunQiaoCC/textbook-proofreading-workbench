@@ -10,6 +10,8 @@ import { DocumentReadService } from './services/documentReadService.mjs'
 import { ChapterService } from './services/chapterService.mjs'
 import { MAX_PROOFREADING_BODY_BYTES, ProofreadingService } from './services/proofreadingService.mjs'
 import { HttpError, UploadSessionService } from './services/uploadSessionService.mjs'
+import { DocumentLifecycleCoordinator } from './services/documentLifecycleCoordinator.mjs'
+import { DocumentDeletionService } from './services/documentDeletionService.mjs'
 
 const MAX_JSON_BODY = 64 * 1024
 
@@ -84,7 +86,7 @@ function errorResponse(error) {
   }
 }
 
-async function handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService) {
+async function handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService, documentDeletionService) {
   const segments = routeSegments(request.url ?? '/')
 
   if (segments.length === 2 && segments[0] === 'api' && segments[1] === 'documents') {
@@ -94,9 +96,17 @@ async function handleRequest(request, response, uploadService, documentReadServi
   }
 
   if (segments.length === 3 && segments[0] === 'api' && segments[1] === 'documents') {
-    if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
-    sendJson(response, 200, await documentReadService.detail(segments[2]))
-    return
+    if (request.method === 'GET') {
+      sendJson(response, 200, await documentReadService.detail(segments[2]))
+      return
+    }
+    if (request.method === 'DELETE') {
+      await documentDeletionService.delete(segments[2])
+      response.statusCode = 204
+      response.end()
+      return
+    }
+    throw new HttpError(405, 'method_not_allowed', 'method not allowed')
   }
 
   // Legacy/document-scope compatibility layer. New UI writes chapter scope.
@@ -233,12 +243,22 @@ async function handleRequest(request, response, uploadService, documentReadServi
 
 export async function createIngestionServer(options = {}) {
   const config = createServerConfig(options)
+  const lifecycleCoordinator = new DocumentLifecycleCoordinator()
   const documentStorage = new LocalDocumentStorage(config.storageRoot)
-  const documentRepository = new FileBackedDocumentRepository(config.storageRoot)
-  const proofreadingRepository = new FileBackedProofreadingRepository(config.storageRoot)
+  const documentRepository = new FileBackedDocumentRepository(config.storageRoot, { lifecycleCoordinator })
+  const proofreadingRepository = new FileBackedProofreadingRepository(config.storageRoot, {
+    lifecycleCoordinator,
+    documentExists: async (documentId) => Boolean(await documentRepository.getById(documentId)),
+  })
   const documentReadService = new DocumentReadService({ documentRepository, documentStorage })
   const chapterService = new ChapterService({ documentRepository })
   const proofreadingService = new ProofreadingService({ documentRepository, proofreadingRepository })
+  const documentDeletionService = new DocumentDeletionService({
+    documentRepository,
+    proofreadingRepository,
+    documentStorage,
+    lifecycleCoordinator,
+  })
   const inspectionService = new PopplerInspectionService({
     storageRoot: config.storageRoot,
     timeoutMs: config.inspectionTimeoutMs,
@@ -258,7 +278,7 @@ export async function createIngestionServer(options = {}) {
   await uploadService.init()
 
   const server = createHttpServer((request, response) => {
-    void handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService).catch((error) => {
+    void handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService, documentDeletionService).catch((error) => {
       if (!response.headersSent) {
         const result = errorResponse(error)
         sendJson(response, result.statusCode, result.body, result.headers)
@@ -284,6 +304,8 @@ export async function createIngestionServer(options = {}) {
     proofreadingRepository,
     proofreadingService,
     uploadService,
+    documentDeletionService,
+    lifecycleCoordinator,
     async close() {
       clearInterval(cleanupTimer)
       if (!server.listening) return

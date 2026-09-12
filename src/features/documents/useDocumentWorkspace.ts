@@ -1,9 +1,11 @@
 import { computed, onUnmounted, ref } from 'vue'
 import type { Chapter, Page } from '../../models/document'
 import { ApiError } from '../../services/apiClient'
+import { clearProofreadingClientState } from '../../services/proofreadingStorage'
 import {
   getDocument,
   getDocumentPages,
+  deleteDocument as deleteDocumentRequest,
   createChapter,
   listChapters,
   listDocuments,
@@ -36,6 +38,8 @@ export function useDocumentWorkspace() {
   const chapterLoading = ref(false)
   const error = ref('')
   const chapterError = ref('')
+  const deletingDocumentId = ref<string | null>(null)
+  const deleteError = ref('')
   const selectedDocument = computed(() =>
     documents.value.find((document) => document.id === selectedDocumentId.value) ?? null,
   )
@@ -188,6 +192,37 @@ export function useDocumentWorkspace() {
     }
   }
 
+  async function deleteDocumentById(documentId: string) {
+    if (deletingDocumentId.value) return false
+    deletingDocumentId.value = documentId
+    deleteError.value = ''
+    stopPolling()
+    try {
+      await deleteDocumentRequest(documentId)
+      clearProofreadingClientState(documentId)
+      const removedIndex = documents.value.findIndex((document) => document.id === documentId)
+      const remaining = documents.value.filter((document) => document.id !== documentId)
+      documents.value = remaining
+
+      if (selectedDocumentId.value === documentId) {
+        selectedDocumentId.value = null
+        pages.value = []
+        chapters.value = []
+        selectedChapterId.value = null
+        chapterLoading.value = false
+        loading.value = false
+        const nextDocument = remaining[removedIndex] ?? remaining[removedIndex - 1] ?? null
+        if (nextDocument) await selectDocument(nextDocument.id)
+      }
+      return true
+    } catch (deleteFailure) {
+      deleteError.value = readableError(deleteFailure, 'document deletion failed; please try again')
+      return false
+    } finally {
+      deletingDocumentId.value = null
+    }
+  }
+
   async function loadDocuments(preferredDocumentId?: string) {
     const requestOperationId = ++operationId
     stopPolling()
@@ -235,11 +270,14 @@ export function useDocumentWorkspace() {
     chapterLoading,
     error,
     chapterError,
+    deletingDocumentId,
+    deleteError,
     loadDocuments,
     selectDocument,
     selectChapter,
     createChapter: createDocumentChapter,
     updateChapter: updateDocumentChapter,
     refreshDocument,
+    deleteDocumentById,
   }
 }

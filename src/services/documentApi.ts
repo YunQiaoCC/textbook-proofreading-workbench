@@ -84,6 +84,10 @@ export function updateChapter(documentId: string, chapterId: string, payload: Ch
   })
 }
 
+export function deleteDocument(documentId: string) {
+  return requestJson<void>(documentPath(documentId), { method: 'DELETE' })
+}
+
 export function documentFileUrl(documentId: string) {
   return apiPath(`${documentPath(documentId)}/file`)
 }
