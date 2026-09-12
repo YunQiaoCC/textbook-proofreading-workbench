@@ -9,6 +9,7 @@ function validIdentifier(value) {
 export class FileBackedDocumentRepository {
   constructor(storageRoot) {
     this.metadataRoot = path.join(storageRoot, 'metadata', 'documents')
+    this.locks = new Map()
   }
 
   async init() {
@@ -65,6 +66,17 @@ export class FileBackedDocumentRepository {
     await this.writeRecord({ ...existing, pages })
   }
 
+  async withDocumentLock(documentId, operation) {
+    const previous = this.locks.get(documentId) ?? Promise.resolve()
+    const current = previous.catch(() => undefined).then(operation)
+    this.locks.set(documentId, current)
+    try {
+      return await current
+    } finally {
+      if (this.locks.get(documentId) === current) this.locks.delete(documentId)
+    }
+  }
+
   async getById(documentId) {
     return (await this.readRecord(documentId))?.document ?? null
   }
@@ -89,6 +101,29 @@ export class FileBackedDocumentRepository {
 
   async listChapters(documentId) {
     return (await this.readRecord(documentId))?.chapters ?? []
+  }
+
+  async getChapter(documentId, chapterId) {
+    const chapters = await this.listChapters(documentId)
+    return chapters.find((chapter) => chapter.id === chapterId) ?? null
+  }
+
+  /**
+   * Chapter metadata shares the existing document record and is updated under
+   * a per-document lock so concurrent chapter setup requests remain atomic.
+   */
+  async saveChapter(documentId, chapter) {
+    return this.withDocumentLock(documentId, async () => {
+      const existing = await this.readRecord(documentId)
+      if (!existing) throw new Error(`Document metadata not found: ${documentId}`)
+      const chapters = existing.chapters ?? []
+      const index = chapters.findIndex((item) => item.id === chapter.id)
+      const nextChapters = index === -1
+        ? [...chapters, chapter]
+        : chapters.map((item, itemIndex) => itemIndex === index ? chapter : item)
+      await this.writeRecord({ ...existing, chapters: nextChapters })
+      return chapter
+    })
   }
 
   async getAsset(assetId) {

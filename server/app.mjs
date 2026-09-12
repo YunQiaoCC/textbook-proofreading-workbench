@@ -7,6 +7,7 @@ import { FileBackedProofreadingRepository } from './repositories/fileBackedProof
 import { LocalDocumentStorage } from './services/localDocumentStorage.mjs'
 import { PopplerInspectionService } from './services/popplerInspection.mjs'
 import { DocumentReadService } from './services/documentReadService.mjs'
+import { ChapterService } from './services/chapterService.mjs'
 import { MAX_PROOFREADING_BODY_BYTES, ProofreadingService } from './services/proofreadingService.mjs'
 import { HttpError, UploadSessionService } from './services/uploadSessionService.mjs'
 
@@ -83,7 +84,7 @@ function errorResponse(error) {
   }
 }
 
-async function handleRequest(request, response, uploadService, documentReadService, proofreadingService) {
+async function handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService) {
   const segments = routeSegments(request.url ?? '/')
 
   if (segments.length === 2 && segments[0] === 'api' && segments[1] === 'documents') {
@@ -98,6 +99,7 @@ async function handleRequest(request, response, uploadService, documentReadServi
     return
   }
 
+  // Legacy/document-scope compatibility layer. New UI writes chapter scope.
   if (
     segments.length === 4 &&
     segments[0] === 'api' &&
@@ -107,6 +109,55 @@ async function handleRequest(request, response, uploadService, documentReadServi
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
     sendJson(response, 200, await documentReadService.pages(segments[2]))
     return
+  }
+
+  if (
+    segments.length === 4 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'chapters'
+  ) {
+    if (request.method === 'GET') {
+      sendJson(response, 200, await chapterService.list(segments[2]))
+      return
+    }
+    if (request.method === 'POST') {
+      const body = await readJsonBody(request)
+      sendJson(response, 201, await chapterService.create(segments[2], body))
+      return
+    }
+    throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+  }
+
+  if (
+    segments.length === 5 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'chapters'
+  ) {
+    if (request.method !== 'PUT') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    const body = await readJsonBody(request)
+    sendJson(response, 200, await chapterService.update(segments[2], segments[4], body))
+    return
+  }
+
+  if (
+    segments.length === 6 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'chapters' &&
+    segments[5] === 'proofreading'
+  ) {
+    if (request.method === 'GET') {
+      sendJson(response, 200, await proofreadingService.getChapter(segments[2], segments[4]))
+      return
+    }
+    if (request.method === 'PUT') {
+      const body = await readJsonBody(request, MAX_PROOFREADING_BODY_BYTES)
+      sendJson(response, 200, await proofreadingService.saveChapter(segments[2], segments[4], body))
+      return
+    }
+    throw new HttpError(405, 'method_not_allowed', 'method not allowed')
   }
 
   if (
@@ -186,6 +237,7 @@ export async function createIngestionServer(options = {}) {
   const documentRepository = new FileBackedDocumentRepository(config.storageRoot)
   const proofreadingRepository = new FileBackedProofreadingRepository(config.storageRoot)
   const documentReadService = new DocumentReadService({ documentRepository, documentStorage })
+  const chapterService = new ChapterService({ documentRepository })
   const proofreadingService = new ProofreadingService({ documentRepository, proofreadingRepository })
   const inspectionService = new PopplerInspectionService({
     storageRoot: config.storageRoot,
@@ -206,7 +258,7 @@ export async function createIngestionServer(options = {}) {
   await uploadService.init()
 
   const server = createHttpServer((request, response) => {
-    void handleRequest(request, response, uploadService, documentReadService, proofreadingService).catch((error) => {
+    void handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService).catch((error) => {
       if (!response.headersSent) {
         const result = errorResponse(error)
         sendJson(response, result.statusCode, result.body, result.headers)
@@ -228,6 +280,7 @@ export async function createIngestionServer(options = {}) {
     documentStorage,
     documentRepository,
     documentReadService,
+    chapterService,
     proofreadingRepository,
     proofreadingService,
     uploadService,

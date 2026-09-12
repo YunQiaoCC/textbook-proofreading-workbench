@@ -1,10 +1,14 @@
 import { computed, onUnmounted, ref } from 'vue'
-import type { Page } from '../../models/document'
+import type { Chapter, Page } from '../../models/document'
 import { ApiError } from '../../services/apiClient'
 import {
   getDocument,
   getDocumentPages,
+  createChapter,
+  listChapters,
   listDocuments,
+  updateChapter,
+  type ChapterInput,
   type ApiDocument,
 } from '../../services/documentApi'
 
@@ -26,10 +30,17 @@ export function useDocumentWorkspace() {
   const documents = ref<ApiDocument[]>([])
   const selectedDocumentId = ref<string | null>(null)
   const pages = ref<Page[]>([])
+  const chapters = ref<Chapter[]>([])
+  const selectedChapterId = ref<string | null>(null)
   const loading = ref(false)
+  const chapterLoading = ref(false)
   const error = ref('')
+  const chapterError = ref('')
   const selectedDocument = computed(() =>
     documents.value.find((document) => document.id === selectedDocumentId.value) ?? null,
+  )
+  const selectedChapter = computed(() =>
+    chapters.value.find((chapter) => chapter.id === selectedChapterId.value) ?? null,
   )
 
   let operationId = 0
@@ -103,6 +114,10 @@ export function useDocumentWorkspace() {
     stopPolling()
     selectedDocumentId.value = documentId
     pages.value = []
+    chapters.value = []
+    selectedChapterId.value = null
+    chapterError.value = ''
+    chapterLoading.value = true
     loading.value = true
     error.value = ''
     try {
@@ -110,16 +125,62 @@ export function useDocumentWorkspace() {
       if (requestOperationId !== operationId) return
       replaceDocument(detail.document)
 
-      const pageResponse = await getDocumentPages(documentId)
+      const [pageResponse, chapterResponse] = await Promise.all([
+        getDocumentPages(documentId),
+        listChapters(documentId),
+      ])
       if (requestOperationId !== operationId) return
       pages.value = pageResponse.pages
+      chapters.value = chapterResponse.chapters
+      selectedChapterId.value = chapterResponse.chapters[0]?.id ?? null
       if (isProcessing(detail.document)) schedulePolling(documentId)
     } catch (requestError) {
       if (requestOperationId === operationId) {
         error.value = readableError(requestError, '文档加载失败，请稍后重试')
       }
     } finally {
+      if (requestOperationId === operationId) chapterLoading.value = false
       if (requestOperationId === operationId) loading.value = false
+    }
+  }
+
+  function selectChapter(chapterId: string) {
+    if (chapters.value.some((chapter) => chapter.id === chapterId)) {
+      selectedChapterId.value = chapterId
+      chapterError.value = ''
+    }
+  }
+
+  async function createDocumentChapter(payload: ChapterInput) {
+    const documentId = selectedDocumentId.value
+    if (!documentId) return
+    chapterLoading.value = true
+    chapterError.value = ''
+    try {
+      const chapter = await createChapter(documentId, payload)
+      chapters.value = [...chapters.value, chapter].sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+      selectedChapterId.value = chapter.id
+    } catch (chapterCreateError) {
+      chapterError.value = readableError(chapterCreateError, '章节保存失败，请检查页码和填写内容')
+    } finally {
+      chapterLoading.value = false
+    }
+  }
+
+  async function updateDocumentChapter(chapterId: string, payload: ChapterInput) {
+    const documentId = selectedDocumentId.value
+    if (!documentId) return
+    chapterLoading.value = true
+    chapterError.value = ''
+    try {
+      const chapter = await updateChapter(documentId, chapterId, payload)
+      chapters.value = chapters.value
+        .map((item) => item.id === chapter.id ? chapter : item)
+        .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+    } catch (chapterUpdateError) {
+      chapterError.value = readableError(chapterUpdateError, '章节更新失败，请检查页码和填写内容')
+    } finally {
+      chapterLoading.value = false
     }
   }
 
@@ -141,6 +202,9 @@ export function useDocumentWorkspace() {
       if (!preferred) {
         selectedDocumentId.value = null
         pages.value = []
+        chapters.value = []
+        selectedChapterId.value = null
+        chapterLoading.value = false
         loading.value = false
         return
       }
@@ -159,11 +223,19 @@ export function useDocumentWorkspace() {
     documents,
     selectedDocumentId,
     selectedDocument,
+    chapters,
+    selectedChapterId,
+    selectedChapter,
     pages,
     loading,
+    chapterLoading,
     error,
+    chapterError,
     loadDocuments,
     selectDocument,
+    selectChapter,
+    createChapter: createDocumentChapter,
+    updateChapter: updateDocumentChapter,
     refreshDocument,
   }
 }

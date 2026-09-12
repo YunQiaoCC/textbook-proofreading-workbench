@@ -1,4 +1,5 @@
 import type {
+  Chapter,
   Document,
   DocumentInspectionSummary,
   OriginalPdfAsset,
@@ -27,6 +28,22 @@ export interface DocumentPagesResponse {
   pages: Page[]
 }
 
+export type ApiChapter = Chapter
+
+export interface ChapterListResponse {
+  documentId: string
+  chapters: ApiChapter[]
+}
+
+export interface ChapterInput {
+  title: string
+  order: number
+  startPdfPage: number
+  endPdfPage: number
+  assigneeName?: string
+  status: Chapter['status']
+}
+
 function documentPath(documentId: string) {
   return `/documents/${encodePathSegment(documentId)}`
 }
@@ -41,6 +58,30 @@ export function getDocument(documentId: string) {
 
 export function getDocumentPages(documentId: string) {
   return requestJson<DocumentPagesResponse>(`${documentPath(documentId)}/pages`)
+}
+
+function chaptersPath(documentId: string) {
+  return `${documentPath(documentId)}/chapters`
+}
+
+export function listChapters(documentId: string) {
+  return requestJson<ChapterListResponse>(chaptersPath(documentId))
+}
+
+export function createChapter(documentId: string, payload: ChapterInput) {
+  return requestJson<ApiChapter>(chaptersPath(documentId), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export function updateChapter(documentId: string, chapterId: string, payload: ChapterInput) {
+  return requestJson<ApiChapter>(`${chaptersPath(documentId)}/${encodePathSegment(chapterId)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
 }
 
 export function documentFileUrl(documentId: string) {

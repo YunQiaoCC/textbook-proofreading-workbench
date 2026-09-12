@@ -9,6 +9,7 @@ import IssueEditor from './components/IssueEditor.vue'
 import IssueList from './components/IssueList.vue'
 import InkLayerActions from './components/InkLayerActions.vue'
 import { documentFileUrl } from './services/documentApi'
+import type { ChapterInput } from './services/documentApi'
 import { useDocumentWorkspace } from './features/documents/useDocumentWorkspace'
 import { useProofreadingWorkspace } from './features/proofreading/useProofreadingWorkspace'
 import { annotationStoresToCore } from './utils/annotationAdapter'
@@ -27,10 +28,18 @@ const {
   documents,
   selectedDocumentId,
   selectedDocument,
+  chapters,
+  selectedChapterId,
+  selectedChapter,
   loading: documentLoading,
+  chapterLoading,
   error,
+  chapterError,
   loadDocuments,
   selectDocument,
+  selectChapter,
+  createChapter,
+  updateChapter,
 } = useDocumentWorkspace()
 
 const {
@@ -54,7 +63,12 @@ const {
   handleSave,
   reload,
   exportIssues,
-} = useProofreadingWorkspace(currentUser.name, selectedDocumentId)
+} = useProofreadingWorkspace(
+  currentUser.name,
+  selectedDocumentId,
+  selectedChapterId,
+  computed(() => selectedChapter.value?.startPdfPage ?? null),
+)
 
 const pdfUrl = computed(() => selectedDocument.value ? documentFileUrl(selectedDocument.value.id) : '')
 const inkLayerInitialAnnotations = computed(() => annotationStoresToCore(annotations.value))
@@ -63,7 +77,7 @@ const selectedDocumentStatus = computed(() => {
   return status ? documentStatusLabels[status] : ''
 })
 const documentContext = computed(() => selectedDocument.value
-  ? `${selectedDocument.value.pageCount} 页 · ${selectedDocumentStatus.value}`
+  ? `${selectedDocument.value.pageCount} 页 · ${selectedDocumentStatus.value}${selectedChapter.value ? ` · ${selectedChapter.value.title}` : ''}`
   : '选择或上传一份教材')
 const saveIndicator = computed(() => {
   if (proofreadingLoading.value) return '正在加载'
@@ -81,6 +95,16 @@ function onDocumentSelected(documentId: string) {
 
 function onDocumentUploaded(documentId: string) {
   void loadDocuments(documentId)
+}
+
+function onChapterSelected(chapterId: string) {
+  selectChapter(chapterId)
+}
+
+function onChapterCreated(payload: ChapterInput) { void createChapter(payload) }
+
+function onChapterUpdated(chapterId: string, payload: ChapterInput) {
+  void updateChapter(chapterId, payload)
 }
 
 function reloadWorkspace() {
@@ -130,9 +154,16 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
         <DocumentOutline
           :documents="documents"
           :selected-document-id="selectedDocumentId"
+          :chapters="chapters"
+          :selected-chapter-id="selectedChapterId"
           :loading="documentLoading"
+          :chapter-loading="chapterLoading"
           :error="error"
+          :chapter-error="chapterError"
           @select="onDocumentSelected"
+          @select-chapter="onChapterSelected"
+          @create-chapter="onChapterCreated"
+          @update-chapter="onChapterUpdated"
         />
       </div>
 
@@ -142,7 +173,7 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
             <span class="reader-file-icon">PDF</span>
             <div>
               <strong>{{ selectedDocument?.title ?? '尚未上传教材' }}</strong>
-              <span>{{ selectedDocument ? `${selectedDocument.pageCount} 页 · ${selectedDocumentStatus}` : '上传 PDF 后开始校对' }}</span>
+                <span>{{ selectedChapter ? `本章 PDF ${selectedChapter.startPdfPage}–${selectedChapter.endPdfPage} 页 · ${selectedChapter.title}` : selectedDocument ? '请选择一个章节' : '上传 PDF 后开始校对' }}</span>
             </div>
           </div>
           <div class="reader-hint">
@@ -153,8 +184,8 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
 
         <div class="inklayer-frame">
           <PdfAnnotator
-            v-if="selectedDocument && selectedDocument.processingStatus !== 'failed' && !proofreadingLoading"
-            :key="selectedDocument.id"
+            v-if="selectedDocument && selectedChapter && selectedDocument.processingStatus !== 'failed' && !proofreadingLoading"
+            :key="`${selectedDocument.id}:${selectedChapter.id}`"
             :url="pdfUrl"
             :user="currentUser"
             locale="zh-CN"
@@ -173,14 +204,14 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
           />
           <div v-else class="reader-empty">
             <div class="reader-empty-icon">PDF</div>
-            <strong>{{ selectedDocument?.processingStatus === 'failed' ? 'PDF 检查失败' : proofreadingLoading ? '正在加载校对数据…' : '选择或上传一份教材' }}</strong>
-            <span>{{ selectedDocument?.processingStatus === 'failed' ? '请检查文件后重试' : proofreadingLoading ? '正在从服务器读取校对意见' : documents.length ? '从左侧选择一份教材' : '尚未上传教材' }}</span>
+            <strong>{{ selectedDocument?.processingStatus === 'failed' ? 'PDF 检查失败' : proofreadingLoading ? '正在加载校对数据…' : selectedDocument && !selectedChapter ? '请选择一个章节' : '选择或上传一份教材' }}</strong>
+            <span>{{ selectedDocument?.processingStatus === 'failed' ? '请检查文件后重试' : proofreadingLoading ? '正在从服务器读取本章校对意见' : selectedDocument && !selectedChapter ? '章节信息待建立或尚未选择章节' : documents.length ? '从左侧选择一份教材' : '尚未上传教材' }}</span>
           </div>
         </div>
       </section>
 
       <aside class="review-panel" aria-label="校对意见">
-        <template v-if="selectedDocument">
+        <template v-if="selectedDocument && selectedChapter">
           <IssueList
             :issues="issues"
             :selected-issue-id="selectedIssueId"
@@ -196,7 +227,7 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
         <div v-else class="review-empty">
           <div class="reader-empty-icon">✎</div>
           <strong>选择或上传一份教材</strong>
-          <span>文档选择后，校对意见会按文档分别保存</span>
+          <span>{{ selectedDocument ? '选择章节后，校对意见会按章节分别保存' : '选择或上传一份教材' }}</span>
         </div>
       </aside>
     </div>

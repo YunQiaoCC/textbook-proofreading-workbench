@@ -85,12 +85,19 @@ export interface Chapter {
   id: string
   documentId: string
   title: string
-  level: number
   order: number
   startPdfPage: number
-  endPdfPage?: number
+  endPdfPage: number
+  assigneeName?: string
+  status: ChapterStatus
+  createdAt: string
+  updatedAt: string
+  /** Retained for compatibility with older chapter metadata. */
+  level?: number
   parentChapterId?: string
 }
+
+export type ChapterStatus = 'unassigned' | 'not_started' | 'in_progress' | 'completed'
 
 export interface OcrPageRange {
   startPdfPage: number

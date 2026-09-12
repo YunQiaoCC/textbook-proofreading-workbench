@@ -12,7 +12,8 @@
     "test:inspect-pdf": "node scripts/test-inspect-pdf.mjs",
     "test:ingestion": "node scripts/test-ingestion.mjs",
     "test:document-read": "node scripts/test-document-read.mjs",
-    "test:proofreading": "node scripts/test-proofreading.mjs"
+    "test:proofreading": "node scripts/test-proofreading.mjs",
+    "test:chapters": "node scripts/test-chapters.mjs"
   },
   "dependencies": {
     "inklayer-vue": "^1.0.4",

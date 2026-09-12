@@ -2,17 +2,14 @@ import { computed, onBeforeUnmount, ref, toValue, watch, type MaybeRef } from 'v
 import { storeToAnnotation, type IAnnotationStore } from 'inklayer-vue'
 import { ApiError } from '../../services/apiClient'
 import {
-  getProofreadingWorkspace,
-  saveProofreadingWorkspace as saveServerProofreadingWorkspace,
+  getChapterProofreadingWorkspace,
+  saveChapterProofreadingWorkspace,
 } from '../../services/proofreadingApi'
 import type { ServerProofreadingWorkspace } from '../../services/proofreadingApi'
 import {
   emptyWorkspace,
-  loadLegacyProofreadingWorkspace,
   loadProofreadingClientState,
-  saveLegacyProofreadingBackup,
   saveProofreadingClientState,
-  type ProofreadingMigrationStatus,
 } from '../../services/proofreadingStorage'
 import type { ProofreadingIssue, ProofreadingIssuePatch, IssueStatus } from '../../models/proofreading'
 import { exportProofreadingCsv } from '../../services/proofreadingExport'
@@ -34,17 +31,19 @@ function formatSavedAt(timestamp = new Date().toISOString()) {
 function readableError(error: unknown, fallback: string) {
   if (!(error instanceof ApiError)) return fallback
   if (error.code === 'network_error') return '网络错误，请检查连接'
+  if (error.code === 'issue_outside_chapter_range') return '意见页码不在本章 PDF 范围内，请检查页码。'
   if (error.status === 409 || error.code === 'proofreading_revision_conflict') {
     return '检测到其他窗口中的更新，请重新加载最新校对数据。'
   }
   return fallback
 }
 
-function hasLegacyBusinessData(workspace: ReturnType<typeof loadLegacyProofreadingWorkspace>) {
-  return Boolean(workspace && (workspace.annotations.length > 0 || workspace.issues.length > 0))
-}
-
-export function useProofreadingWorkspace(defaultReviewer: string, documentId: MaybeRef<string | null>) {
+export function useProofreadingWorkspace(
+  defaultReviewer: string,
+  documentId: MaybeRef<string | null>,
+  chapterId: MaybeRef<string | null>,
+  chapterStartPdfPage: MaybeRef<number | null>,
+) {
   const annotations = ref<IAnnotationStore[]>([])
   const issues = ref<ProofreadingIssue[]>([])
   const selectedIssueId = ref<string | null>(null)
@@ -55,14 +54,21 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
   const revision = ref(0)
   const conflict = ref(false)
   const activeDocumentId = ref<string | null>(null)
+  const activeChapterId = ref<string | null>(null)
 
   const selectedIssue = computed(() => issues.value.find((issue) => issue.id === selectedIssueId.value) ?? null)
 
   let loadGeneration = 0
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let saveInFlight = false
+  let saveInFlightPromise: Promise<void> | null = null
   let saveQueued = false
-  let migrationStatus: ProofreadingMigrationStatus | undefined
+  let transitionFlushActive = false
+  let transitionQueue: Promise<void> = Promise.resolve()
+
+  function hasActiveScope() {
+    return Boolean(activeDocumentId.value && activeChapterId.value)
+  }
 
   function clearSaveTimer() {
     if (saveTimer) clearTimeout(saveTimer)
@@ -71,11 +77,11 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
 
   function persistClientState() {
     const currentDocumentId = activeDocumentId.value
-    if (!currentDocumentId) return
-    saveProofreadingClientState(currentDocumentId, {
+    const currentChapterId = activeChapterId.value
+    if (!currentDocumentId || !currentChapterId) return
+    saveProofreadingClientState(currentDocumentId, currentChapterId, {
       selectedIssueId: selectedIssueId.value,
       serverRevision: revision.value,
-      ...(migrationStatus ? { migrationStatus } : {}),
     })
   }
 
@@ -87,7 +93,6 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
     lastSavedAt.value = ''
     saveError.value = ''
     conflict.value = false
-    migrationStatus = undefined
   }
 
   function applyServerWorkspace(
@@ -106,75 +111,11 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
     persistClientState()
   }
 
-  async function loadWorkspace(nextDocumentId: string | null) {
-    const generation = ++loadGeneration
-    clearSaveTimer()
-    saveQueued = false
-    activeDocumentId.value = nextDocumentId
-    resetUiState()
-
-    if (!nextDocumentId) {
-      loading.value = false
-      saving.value = false
-      return
-    }
-
-    loading.value = true
-    saving.value = false
-    try {
-      const serverWorkspace = await getProofreadingWorkspace(nextDocumentId)
-      if (generation !== loadGeneration) return
-
-      const clientState = loadProofreadingClientState(nextDocumentId)
-      const legacyWorkspace = loadLegacyProofreadingWorkspace(nextDocumentId)
-      const selectedPreference = clientState?.selectedIssueId ?? legacyWorkspace?.selectedIssueId ?? null
-      migrationStatus = clientState?.migrationStatus
-      let effectiveWorkspace = serverWorkspace
-
-      if (!migrationStatus && hasLegacyBusinessData(legacyWorkspace)) {
-        saveLegacyProofreadingBackup(nextDocumentId, legacyWorkspace!)
-        const serverIsEmpty = serverWorkspace.revision === 0 &&
-          serverWorkspace.annotations.length === 0 &&
-          serverWorkspace.issues.length === 0
-
-        if (serverIsEmpty) {
-          try {
-            effectiveWorkspace = await saveServerProofreadingWorkspace(nextDocumentId, {
-              baseRevision: 0,
-              annotations: legacyWorkspace!.annotations,
-              issues: legacyWorkspace!.issues,
-            })
-            migrationStatus = 'migrated'
-          } catch (migrationError) {
-            if (generation !== loadGeneration) return
-            if (migrationError instanceof ApiError && migrationError.status === 409) {
-              effectiveWorkspace = await getProofreadingWorkspace(nextDocumentId)
-              migrationStatus = 'conflict'
-            } else {
-              migrationStatus = 'skipped'
-              saveError.value = '旧本地校对数据迁移失败，服务器数据保持不变。'
-            }
-          }
-        } else {
-          migrationStatus = 'skipped'
-        }
-      }
-
-      if (generation !== loadGeneration) return
-      applyServerWorkspace(effectiveWorkspace, selectedPreference)
-    } catch (loadError) {
-      if (generation !== loadGeneration) return
-      saveError.value = readableError(loadError, '校对数据加载失败，请稍后重试')
-      lastSavedAt.value = ''
-    } finally {
-      if (generation === loadGeneration) loading.value = false
-    }
-  }
-
   async function flushServerSave(generation: number) {
     saveTimer = null
     const currentDocumentId = activeDocumentId.value
-    if (!currentDocumentId || conflict.value || loading.value) return
+    const currentChapterId = activeChapterId.value
+    if (!currentDocumentId || !currentChapterId || conflict.value || loading.value) return
     if (saveInFlight) {
       saveQueued = true
       return
@@ -187,12 +128,16 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
     saving.value = true
     saveError.value = ''
     try {
-      const savedWorkspace = await saveServerProofreadingWorkspace(currentDocumentId, {
-        baseRevision,
-        annotations: snapshotAnnotations,
-        issues: snapshotIssues,
-      })
-      if (generation !== loadGeneration || activeDocumentId.value !== currentDocumentId) return
+      const savedWorkspace = await saveChapterProofreadingWorkspace(
+        currentDocumentId,
+        currentChapterId,
+        { baseRevision, annotations: snapshotAnnotations, issues: snapshotIssues },
+      )
+      if (
+        generation !== loadGeneration ||
+        activeDocumentId.value !== currentDocumentId ||
+        activeChapterId.value !== currentChapterId
+      ) return
 
       if (annotations.value === snapshotAnnotations && issues.value === snapshotIssues) {
         annotations.value = savedWorkspace.annotations
@@ -204,7 +149,11 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
       saveError.value = ''
       persistClientState()
     } catch (saveFailure) {
-      if (generation !== loadGeneration || activeDocumentId.value !== currentDocumentId) return
+      if (
+        generation !== loadGeneration ||
+        activeDocumentId.value !== currentDocumentId ||
+        activeChapterId.value !== currentChapterId
+      ) return
       if (saveFailure instanceof ApiError && saveFailure.status === 409) {
         conflict.value = true
         saveError.value = readableError(saveFailure, '校对数据版本冲突')
@@ -216,18 +165,52 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
       }
     } finally {
       saveInFlight = false
-      if (generation === loadGeneration && activeDocumentId.value === currentDocumentId) {
+      if (generation === loadGeneration && activeDocumentId.value === currentDocumentId && activeChapterId.value === currentChapterId) {
         saving.value = false
       }
-      if (saveQueued && activeDocumentId.value && !conflict.value) {
+      if (saveQueued && hasActiveScope() && !conflict.value && generation === loadGeneration && !transitionFlushActive) {
         saveQueued = false
         scheduleServerSave()
       }
     }
   }
 
+  function startServerSave(generation: number) {
+    const task = flushServerSave(generation)
+    saveInFlightPromise = task
+    void task.then(
+      () => { if (saveInFlightPromise === task) saveInFlightPromise = null },
+      () => { if (saveInFlightPromise === task) saveInFlightPromise = null },
+    )
+    return task
+  }
+
+  async function flushPendingSave() {
+    transitionFlushActive = true
+    try {
+      while (true) {
+        const hadPendingTimer = saveTimer !== null
+        clearSaveTimer()
+        if (hadPendingTimer) saveQueued = true
+        if (saveInFlightPromise) {
+          await saveInFlightPromise
+          continue
+        }
+        if (saveQueued && hasActiveScope() && !conflict.value) {
+          saveQueued = false
+          await startServerSave(loadGeneration)
+          continue
+        }
+        saveQueued = false
+        return
+      }
+    } finally {
+      transitionFlushActive = false
+    }
+  }
+
   function scheduleServerSave() {
-    if (!activeDocumentId.value || loading.value || conflict.value) return
+    if (!hasActiveScope() || loading.value || conflict.value) return
     saveError.value = ''
     if (saveInFlight) {
       saveQueued = true
@@ -235,7 +218,41 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
     }
     clearSaveTimer()
     const generation = loadGeneration
-    saveTimer = setTimeout(() => { void flushServerSave(generation) }, SAVE_DEBOUNCE_MS)
+    saveTimer = setTimeout(() => { void startServerSave(generation) }, SAVE_DEBOUNCE_MS)
+  }
+
+  async function loadWorkspace(nextDocumentId: string | null, nextChapterId: string | null) {
+    // Wait for the old chapter before replacing shared UI state. Each save
+    // captures its own documentId + chapterId, so it cannot land in a new one.
+    await flushPendingSave()
+
+    const generation = ++loadGeneration
+    clearSaveTimer()
+    saveQueued = false
+    activeDocumentId.value = nextDocumentId
+    activeChapterId.value = nextChapterId
+    resetUiState()
+
+    if (!nextDocumentId || !nextChapterId) {
+      loading.value = false
+      saving.value = false
+      return
+    }
+
+    loading.value = true
+    saving.value = false
+    try {
+      const serverWorkspace = await getChapterProofreadingWorkspace(nextDocumentId, nextChapterId)
+      if (generation !== loadGeneration) return
+      const clientState = loadProofreadingClientState(nextDocumentId, nextChapterId)
+      applyServerWorkspace(serverWorkspace, clientState?.selectedIssueId ?? null)
+    } catch (loadError) {
+      if (generation !== loadGeneration) return
+      saveError.value = readableError(loadError, '本章校对数据加载失败，请稍后重试')
+      lastSavedAt.value = ''
+    } finally {
+      if (generation === loadGeneration) loading.value = false
+    }
   }
 
   function selectIssue(id: string) {
@@ -244,11 +261,22 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
   }
 
   function createIssue(annotationId = `manual-${crypto.randomUUID()}`) {
+    if (!hasActiveScope()) return
     const now = new Date().toISOString()
     const issue: ProofreadingIssue = {
-      id: `issue-${annotationId}`, annotationId, pdfPage: 1, printedPage: '', originalText: '',
-      category: 'other', suggestion: '', reason: '', status: 'pending', reviewer: defaultReviewer,
-      verifier: '', createdAt: now, updatedAt: now,
+      id: `issue-${annotationId}`,
+      annotationId,
+      pdfPage: toValue(chapterStartPdfPage) ?? 1,
+      printedPage: '',
+      originalText: '',
+      category: 'other',
+      suggestion: '',
+      reason: '',
+      status: 'pending',
+      reviewer: defaultReviewer,
+      verifier: '',
+      createdAt: now,
+      updatedAt: now,
     }
     issues.value = [issue, ...issues.value]
     selectedIssueId.value = issue.id
@@ -259,6 +287,7 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
   function addManualIssue() { createIssue() }
 
   function ensureIssueForAnnotation(annotationValue: InkLayerAnnotationValue) {
+    if (!hasActiveScope()) return null
     const annotation = annotationValueToStore(annotationValue)
     const existing = issues.value.find((issue) => issue.annotationId === annotation.id)
     if (existing) {
@@ -292,8 +321,15 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
     scheduleServerSave()
   }
 
-  function handleAnnotationAdded(annotation: InkLayerAnnotationValue) { syncAnnotation(annotation); ensureIssueForAnnotation(annotation) }
-  function handleAnnotationUpdated(annotation: InkLayerAnnotationValue) { syncAnnotation(annotation); ensureIssueForAnnotation(annotation) }
+  function handleAnnotationAdded(annotation: InkLayerAnnotationValue) {
+    syncAnnotation(annotation)
+    ensureIssueForAnnotation(annotation)
+  }
+
+  function handleAnnotationUpdated(annotation: InkLayerAnnotationValue) {
+    syncAnnotation(annotation)
+    ensureIssueForAnnotation(annotation)
+  }
 
   function handleAnnotationDeleted(annotationId: string) {
     annotations.value = annotations.value.filter((annotation) => annotation.id !== annotationId)
@@ -315,10 +351,17 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
   }
 
   function reload() {
-    return loadWorkspace(activeDocumentId.value)
+    return loadWorkspace(activeDocumentId.value, activeChapterId.value)
   }
 
-  watch(() => toValue(documentId), (nextDocumentId) => { void loadWorkspace(nextDocumentId) }, { immediate: true })
+  watch(
+    () => [toValue(documentId), toValue(chapterId)] as const,
+    ([nextDocumentId, nextChapterId]) => {
+      transitionQueue = transitionQueue.then(() => loadWorkspace(nextDocumentId, nextChapterId))
+      void transitionQueue.catch(() => undefined)
+    },
+    { immediate: true },
+  )
 
   onBeforeUnmount(() => {
     loadGeneration += 1
@@ -327,11 +370,26 @@ export function useProofreadingWorkspace(defaultReviewer: string, documentId: Ma
   })
 
   return {
-    annotations, issues, selectedIssueId, selectedIssue, lastSavedAt,
-    loading, saving, saveError, revision, conflict,
-    addManualIssue, selectIssue, updateIssue, updateIssueStatus,
-    handleAnnotationAdded, handleAnnotationDeleted, handleAnnotationSelected,
-    handleAnnotationUpdated, handleSave, reload,
+    annotations,
+    issues,
+    selectedIssueId,
+    selectedIssue,
+    lastSavedAt,
+    loading,
+    saving,
+    saveError,
+    revision,
+    conflict,
+    addManualIssue,
+    selectIssue,
+    updateIssue,
+    updateIssueStatus,
+    handleAnnotationAdded,
+    handleAnnotationDeleted,
+    handleAnnotationSelected,
+    handleAnnotationUpdated,
+    handleSave,
+    reload,
     exportIssues: () => exportProofreadingCsv(issues.value),
   }
 }

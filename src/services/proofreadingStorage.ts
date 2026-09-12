@@ -33,8 +33,8 @@ function legacyBackupKey(documentId: string) {
   return `proofreading-workspace-legacy-backup:${encodedDocumentId(documentId)}`
 }
 
-function clientStorageKey(documentId: string) {
-  return `proofreading-client:v2:${encodedDocumentId(documentId)}`
+function clientStorageKey(documentId: string, chapterId: string) {
+  return `proofreading-client:v3:${encodedDocumentId(documentId)}:${encodedDocumentId(chapterId)}`
 }
 
 function readJson<T>(key: string, fallback: T): T {
@@ -53,6 +53,7 @@ function writeJson(key: string, value: unknown) {
 }
 
 export function loadLegacyProofreadingWorkspace(documentId: string) {
+  // Legacy document-scope local cache. Chapter UI does not infer ownership from it.
   const value = readJson<Partial<LegacyProofreadingWorkspaceSnapshot> | null>(legacyStorageKey(documentId), null)
   if (!value || typeof value !== 'object') return null
   return {
@@ -69,8 +70,8 @@ export function saveLegacyProofreadingBackup(
   writeJson(legacyBackupKey(documentId), workspace)
 }
 
-export function loadProofreadingClientState(documentId: string) {
-  const value = readJson<Partial<ProofreadingClientState> | null>(clientStorageKey(documentId), null)
+export function loadProofreadingClientState(documentId: string, chapterId: string) {
+  const value = readJson<Partial<ProofreadingClientState> | null>(clientStorageKey(documentId, chapterId), null)
   if (!value || typeof value !== 'object') return null
   const serverRevision = value.serverRevision
   if (typeof serverRevision !== 'number' || !Number.isSafeInteger(serverRevision) || serverRevision < 0) return null
@@ -84,8 +85,8 @@ export function loadProofreadingClientState(documentId: string) {
   }
 }
 
-export function saveProofreadingClientState(documentId: string, state: ProofreadingClientState) {
-  writeJson(clientStorageKey(documentId), state)
+export function saveProofreadingClientState(documentId: string, chapterId: string, state: ProofreadingClientState) {
+  writeJson(clientStorageKey(documentId, chapterId), state)
 }
 
 export { emptyWorkspace }

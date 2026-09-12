@@ -13,6 +13,8 @@ export interface DocumentRepository {
   savePages(documentId: string, pages: readonly Page[]): Promise<void>
   listPages(documentId: string): Promise<readonly Page[]>
   listChapters(documentId: string): Promise<readonly Chapter[]>
+  getChapter(documentId: string, chapterId: string): Promise<Chapter | null>
+  saveChapter(documentId: string, chapter: Chapter): Promise<void>
   getAsset(assetId: string): Promise<DocumentAsset | null>
   getAssetForDocument(documentId: string, assetId: string): Promise<DocumentAsset | null>
 }
