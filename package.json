@@ -17,9 +17,11 @@
     "test:document-delete": "node scripts/test-document-delete.mjs",
     "test:issue-delete": "node scripts/test-issue-delete.mjs",
     "test:text-extraction": "node scripts/test-text-extraction.mjs",
-    "test:legal-skill": "node scripts/validate-legal-proofreading-skill.mjs"
+    "test:legal-skill": "node scripts/validate-legal-proofreading-skill.mjs",
+    "test:yuandian-retrieval": "node scripts/test-yuandian-retrieval.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "inklayer-vue": "^1.0.4",
     "vue": "^3.5.39"
   },
