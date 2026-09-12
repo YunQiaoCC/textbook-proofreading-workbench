@@ -16,8 +16,9 @@ const SEARCH_DATE_FIELDS = [
 
 // Input contract observed from the first real tools/list on 2026-09-12.
 // `allowed` is a provider-private baseline, while `used` is the smaller set
-// the v0.1 adapter may actually send. Response fields remain expectations
-// until the first successful real tools/call verifies their shape.
+// the v0.1 adapter may actually send. Only the statute-search response path
+// is verified; detail, article-search, vector, historical, and not-found
+// response shapes remain expectations until their own controlled discovery.
 export const YUANDIAN_TOOL_CONTRACTS = Object.freeze({
   [YUANDIAN_LAW_TOOLS.VECTOR_SEARCH]: {
     required: ['query'],
@@ -57,7 +58,11 @@ export const YUANDIAN_TOOL_CONTRACTS = Object.freeze({
       'keyword', 'search_mode', 'fgmc', 'sxx', 'dy', 'xljb_1', 'fbbm',
       ...SEARCH_DATE_FIELDS,
     ].map((name) => [name, 'string']).concat([['top_k', 'number']])),
-    responseFields: ['candidate list', 'id?', 'fgid?', 'fgmc?', 'dy?'],
+    responseCollectionPath: ['data', 'data'],
+    responseFields: [
+      '_score', 'dy', 'fbbm', 'fbrq', 'fgmc', 'fwzh', 'id',
+      'ssrq', 'sxx', 'title', 'url', 'xljb_1', 'xljb_2',
+    ],
   },
   [YUANDIAN_LAW_TOOLS.ARTICLE_DETAIL]: {
     required: [],

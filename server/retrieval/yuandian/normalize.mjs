@@ -1,3 +1,5 @@
+import { RetrievalProviderError } from '../errors.mjs'
+
 const SOURCE_TYPE_MAP = new Map([
   ['法律', 'law'],
   ['行政法规', 'administrative_regulation'],
@@ -54,15 +56,58 @@ export function readYuandianPayload(result) {
   }
 }
 
-export function searchCandidates(payload) {
-  if (Array.isArray(payload)) return payload
-  for (const field of ['data', 'results', 'records', 'items', 'list']) {
-    if (Array.isArray(payload?.[field])) return payload[field]
-    for (const nested of ['results', 'records', 'items', 'list']) {
-      if (Array.isArray(payload?.[field]?.[nested])) return payload[field][nested]
-    }
+// Finite, provider-evidenced response contracts only. The data.data path was
+// observed from a real yuandian_rh_fg_search call on 2026-09-13. Keep this list
+// explicit: retrieval must never guess that an arbitrary nested array contains
+// legal candidates.
+const SEARCH_COLLECTION_PATHS = Object.freeze([
+  Object.freeze(['data', 'data']),
+  Object.freeze([]),
+  Object.freeze(['data']),
+  Object.freeze(['results']),
+  Object.freeze(['records']),
+  Object.freeze(['items']),
+  Object.freeze(['list']),
+  Object.freeze(['data', 'results']),
+  Object.freeze(['data', 'records']),
+  Object.freeze(['data', 'items']),
+  Object.freeze(['data', 'list']),
+  Object.freeze(['results', 'results']),
+  Object.freeze(['results', 'records']),
+  Object.freeze(['results', 'items']),
+  Object.freeze(['results', 'list']),
+  Object.freeze(['records', 'results']),
+  Object.freeze(['records', 'records']),
+  Object.freeze(['records', 'items']),
+  Object.freeze(['records', 'list']),
+  Object.freeze(['items', 'results']),
+  Object.freeze(['items', 'records']),
+  Object.freeze(['items', 'items']),
+  Object.freeze(['items', 'list']),
+  Object.freeze(['list', 'results']),
+  Object.freeze(['list', 'records']),
+  Object.freeze(['list', 'items']),
+  Object.freeze(['list', 'list']),
+])
+
+function valueAtPath(payload, path) {
+  let value = payload
+  for (const field of path) {
+    if (!value || typeof value !== 'object' || !Object.hasOwn(value, field)) return undefined
+    value = value[field]
   }
-  return []
+  return value
+}
+
+export function searchCandidates(payload) {
+  for (const path of SEARCH_COLLECTION_PATHS) {
+    const candidate = valueAtPath(payload, path)
+    if (Array.isArray(candidate)) return candidate
+  }
+  throw new RetrievalProviderError('provider_error', {
+    providerCode: 'unsupported_response_shape',
+    retryable: false,
+  })
 }
 
 export function detailRecord(payload) {

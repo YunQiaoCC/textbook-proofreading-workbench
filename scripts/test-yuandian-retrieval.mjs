@@ -12,6 +12,7 @@ import {
   validateYuandianRuntimeSchema,
 } from '../server/retrieval/index.mjs'
 import { mapYuandianSourceType } from '../server/retrieval/yuandian/normalize.mjs'
+import { observedFgSearchResponse } from './fixtures/yuandian-fg-search-observed.mjs'
 
 const SECRET = 'test-secret-must-not-leak'
 const NOW = new Date('2026-09-12T00:00:00.000Z')
@@ -227,6 +228,132 @@ test('runtime candidate id is forwarded as canonical statute detail id', async (
   })
   assert.equal(result.status, 'evidence_found')
   assert.deepEqual(session.calls[1].request.arguments, { id: 'runtime-fg-id' })
+})
+
+test('observed fg search data.data wrapper extracts a candidate', async () => {
+  const { adapter, session } = harness([
+    { tool: 'yuandian_rh_fg_search', result: observedFgSearchResponse() },
+    { tool: 'yuandian_rh_fg_detail', result: statuteDetail({ id: 'FAKE_ID', fgmc: 'FAKE_LAW' }) },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-observed-wrapper', kind: 'legal_status', text: 'FAKE_STATUS_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.deepEqual(session.calls[1].request.arguments, { id: 'FAKE_ID' })
+})
+
+test('observed fg search data.data empty collection is not_found', async () => {
+  const { adapter, session } = harness([
+    { tool: 'yuandian_rh_fg_search', result: observedFgSearchResponse({ records: [] }) },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-observed-empty', kind: 'legal_status', text: 'FAKE_EMPTY_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.equal(result.status, 'not_found')
+  assert.equal(session.calls.length, 1)
+})
+
+test('unknown structuredContent wrapper fails closed', async () => {
+  const { adapter } = harness([
+    { tool: 'yuandian_rh_fg_search', result: mcp({ unknownWrapper: { candidates: [] } }) },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-unknown-wrapper', kind: 'legal_status', text: 'FAKE_UNKNOWN_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.equal(result.status, 'provider_error')
+  assert.equal(result.error.code, 'provider_error')
+  assert.equal(result.error.providerCode, 'unsupported_response_shape')
+  assert.equal(result.error.retryable, false)
+})
+
+test('unknown wrapper is never normalized as not_found', async () => {
+  const { adapter } = harness([
+    { tool: 'yuandian_rh_fg_search', result: mcp({ envelope: { data: [] } }) },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-unknown-not-found', kind: 'legal_status', text: 'FAKE_UNKNOWN_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.notEqual(result.status, 'not_found')
+  assert.equal(result.status, 'provider_error')
+})
+
+test('malformed observed collection type fails closed', async () => {
+  const { adapter } = harness([
+    { tool: 'yuandian_rh_fg_search', result: mcp({ data: { data: { id: 'FAKE_ID' } } }) },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-malformed-collection', kind: 'legal_status', text: 'FAKE_MALFORMED_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.equal(result.status, 'provider_error')
+  assert.equal(result.error.providerCode, 'unsupported_response_shape')
+})
+
+test('unsupported structuredContent does not fall back to content text', async () => {
+  const fallback = JSON.stringify({ data: [{ id: 'FAKE_FALLBACK_ID', fgmc: 'FAKE_LAW' }] })
+  const { adapter, session } = harness([
+    {
+      tool: 'yuandian_rh_fg_search',
+      result: { structuredContent: { unsupported: true }, content: [{ type: 'text', text: fallback }] },
+    },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-no-content-fallback', kind: 'legal_status', text: 'FAKE_FALLBACK_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.equal(result.status, 'provider_error')
+  assert.equal(session.calls.length, 1)
+})
+
+test('candidate collection path must match an explicit contract exactly', async () => {
+  const { adapter } = harness([
+    {
+      tool: 'yuandian_rh_fg_search',
+      result: mcp({ data: { data: { items: [{ id: 'FAKE_DEEP_ID', fgmc: 'FAKE_LAW' }] } } }),
+    },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-exact-path', kind: 'legal_status', text: 'FAKE_DEEP_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.equal(result.status, 'provider_error')
+})
+
+test('normalized mirror alone is not guessed as the candidate collection', async () => {
+  const { adapter } = harness([
+    {
+      tool: 'yuandian_rh_fg_search',
+      result: mcp({ normalized: { items: [{ id: 'FAKE_MIRROR_ID', fgmc: 'FAKE_LAW' }] } }),
+    },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-normalized-mirror', kind: 'legal_status', text: 'FAKE_MIRROR_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.equal(result.status, 'provider_error')
+})
+
+test('unsupported provider response and secret do not enter provider-neutral result', async () => {
+  const rawMarker = 'SYNTHETIC_UNSUPPORTED_RAW_MARKER'
+  const { adapter } = harness([
+    {
+      tool: 'yuandian_rh_fg_search',
+      result: mcp({ unknown: { rawMarker, authorization: SECRET } }),
+    },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-unsupported-private', kind: 'legal_status', text: 'FAKE_PRIVATE_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  const serialized = JSON.stringify(result)
+  assert.equal(result.status, 'provider_error')
+  assert.equal(serialized.includes(rawMarker), false)
+  assert.equal(serialized.includes(SECRET), false)
+  assert.equal(serialized.includes('authorization'), false)
 })
 
 test('known article routes directly to article detail', async () => {

@@ -22,6 +22,7 @@ const ERROR_DEFINITIONS = Object.freeze({
 
 const SAFE_PROVIDER_CODES = new Set([
   'tool_not_allowed',
+  'unsupported_response_shape',
   'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE', 'ETIMEDOUT',
   'REQUEST_TIMEOUT', 'SEND_FAILED', 'CONNECTION_CLOSED', 'CLIENT_HTTP_FAILED_TO_OPEN_STREAM',
 ])
