@@ -40,6 +40,13 @@ server {
         proxy_set_header Authorization "";
     }
 
+    # Keep hashed PDF.js worker modules as real static assets. Do not let
+    # missing .mjs assets fall through to the SPA index.html.
+    location ~* ^/assets/.*\.mjs$ {
+        default_type application/javascript;
+        try_files $uri =404;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }
