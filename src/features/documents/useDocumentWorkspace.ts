@@ -151,25 +151,27 @@ export function useDocumentWorkspace() {
     }
   }
 
-  async function createDocumentChapter(payload: ChapterInput) {
+  async function createDocumentChapter(payload: ChapterInput): Promise<Chapter | null> {
     const documentId = selectedDocumentId.value
-    if (!documentId) return
+    if (!documentId) return null
     chapterLoading.value = true
     chapterError.value = ''
     try {
       const chapter = await createChapter(documentId, payload)
       chapters.value = [...chapters.value, chapter].sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
       selectedChapterId.value = chapter.id
+      return chapter
     } catch (chapterCreateError) {
       chapterError.value = readableError(chapterCreateError, '章节保存失败，请检查页码和填写内容')
+      return null
     } finally {
       chapterLoading.value = false
     }
   }
 
-  async function updateDocumentChapter(chapterId: string, payload: ChapterInput) {
+  async function updateDocumentChapter(chapterId: string, payload: ChapterInput): Promise<Chapter | null> {
     const documentId = selectedDocumentId.value
-    if (!documentId) return
+    if (!documentId) return null
     chapterLoading.value = true
     chapterError.value = ''
     try {
@@ -177,8 +179,10 @@ export function useDocumentWorkspace() {
       chapters.value = chapters.value
         .map((item) => item.id === chapter.id ? chapter : item)
         .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+      return chapter
     } catch (chapterUpdateError) {
       chapterError.value = readableError(chapterUpdateError, '章节更新失败，请检查页码和填写内容')
+      return null
     } finally {
       chapterLoading.value = false
     }

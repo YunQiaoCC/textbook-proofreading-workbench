@@ -322,16 +322,19 @@ export function useProofreadingWorkspace(
   }
 
   function handleAnnotationAdded(annotation: InkLayerAnnotationValue) {
+    if (!hasActiveScope()) return
     syncAnnotation(annotation)
     ensureIssueForAnnotation(annotation)
   }
 
   function handleAnnotationUpdated(annotation: InkLayerAnnotationValue) {
+    if (!hasActiveScope()) return
     syncAnnotation(annotation)
     ensureIssueForAnnotation(annotation)
   }
 
   function handleAnnotationDeleted(annotationId: string) {
+    if (!hasActiveScope()) return
     annotations.value = annotations.value.filter((annotation) => annotation.id !== annotationId)
     issues.value = issues.value.filter((issue) => issue.annotationId !== annotationId)
     if (!selectedIssue.value) {
@@ -346,6 +349,7 @@ export function useProofreadingWorkspace(
   }
 
   function handleSave(nextAnnotations: InkLayerAnnotationValue[]) {
+    if (!hasActiveScope()) return
     annotations.value = nextAnnotations.map(annotationValueToStore)
     scheduleServerSave()
   }

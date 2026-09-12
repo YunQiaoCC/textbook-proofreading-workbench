@@ -71,7 +71,6 @@ const {
 )
 
 const pdfUrl = computed(() => selectedDocument.value ? documentFileUrl(selectedDocument.value.id) : '')
-const inkLayerInitialAnnotations = computed(() => annotationStoresToCore(annotations.value))
 const selectedDocumentStatus = computed(() => {
   const status = selectedDocument.value?.processingStatus
   return status ? documentStatusLabels[status] : ''
@@ -80,12 +79,20 @@ const documentContext = computed(() => selectedDocument.value
   ? `${selectedDocument.value.pageCount} 页 · ${selectedDocumentStatus.value}${selectedChapter.value ? ` · ${selectedChapter.value.title}` : ''}`
   : '选择或上传一份教材')
 const saveIndicator = computed(() => {
+  if (!selectedDocument.value) return '尚未选择教材'
+  if (!selectedChapter.value) return '浏览模式'
   if (proofreadingLoading.value) return '正在加载'
   if (conflict.value) return '存在版本冲突'
   if (saving.value) return '正在保存'
   if (saveError.value) return '保存失败'
   return lastSavedAt.value ? `已保存 ${lastSavedAt.value}` : '尚未保存'
 })
+const annotationPermissions = computed(() => selectedChapter.value
+  ? undefined
+  : { can: () => false })
+const inkLayerInitialAnnotations = computed(() => selectedChapter.value
+  ? annotationStoresToCore(annotations.value)
+  : [])
 
 onMounted(() => { void loadDocuments() })
 
@@ -101,10 +108,14 @@ function onChapterSelected(chapterId: string) {
   selectChapter(chapterId)
 }
 
-function onChapterCreated(payload: ChapterInput) { void createChapter(payload) }
+async function onChapterCreated(payload: ChapterInput, onSuccess: () => void) {
+  const chapter = await createChapter(payload)
+  if (chapter) onSuccess()
+}
 
-function onChapterUpdated(chapterId: string, payload: ChapterInput) {
-  void updateChapter(chapterId, payload)
+async function onChapterUpdated(chapterId: string, payload: ChapterInput, onSuccess: () => void) {
+  const chapter = await updateChapter(chapterId, payload)
+  if (chapter) onSuccess()
 }
 
 function reloadWorkspace() {
@@ -140,7 +151,7 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
           {{ saveIndicator }}
         </span>
         <button v-if="conflict" class="header-link" type="button" @click="reloadWorkspace">重新加载</button>
-        <button class="header-button" type="button" :disabled="!selectedDocument" @click="exportIssues">
+        <button class="header-button" type="button" :disabled="!selectedDocument || !selectedChapter" @click="exportIssues">
           <span aria-hidden="true">↥</span>
           导出校对表
         </button>
@@ -173,19 +184,22 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
             <span class="reader-file-icon">PDF</span>
             <div>
               <strong>{{ selectedDocument?.title ?? '尚未上传教材' }}</strong>
-                <span>{{ selectedChapter ? `本章 PDF ${selectedChapter.startPdfPage}–${selectedChapter.endPdfPage} 页 · ${selectedChapter.title}` : selectedDocument ? '请选择一个章节' : '上传 PDF 后开始校对' }}</span>
+                <span>{{ selectedChapter ? `本章 PDF ${selectedChapter.startPdfPage}–${selectedChapter.endPdfPage} 页 · ${selectedChapter.title}` : selectedDocument ? '整本 PDF · 浏览/章节划分模式' : '上传 PDF 后开始校对' }}</span>
             </div>
           </div>
           <div class="reader-hint">
-            <span class="shortcut-key">⌘</span>
-            选中文字即可添加高亮或批注
+            <template v-if="selectedChapter">
+              <span class="shortcut-key">⌘</span>
+              选中文字即可添加高亮或批注
+            </template>
+            <span v-else-if="selectedDocument">浏览模式 · 建立或选择章节后开始校对</span>
           </div>
         </div>
 
         <div class="inklayer-frame">
           <PdfAnnotator
-            v-if="selectedDocument && selectedChapter && selectedDocument.processingStatus !== 'failed' && !proofreadingLoading"
-            :key="`${selectedDocument.id}:${selectedChapter.id}`"
+            v-if="selectedDocument?.processingStatus === 'ready' && !proofreadingLoading"
+            :key="`${selectedDocument.id}:${selectedChapter?.id ?? 'browse'}`"
             :url="pdfUrl"
             :user="currentUser"
             locale="zh-CN"
@@ -195,7 +209,8 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
             :default-show-annotations-sidebar="true"
             :default-show-annotation-author-labels="false"
             :initial-annotations="inkLayerInitialAnnotations"
-            :actions="InkLayerActions"
+            :actions="selectedChapter ? InkLayerActions : undefined"
+            :annotation-permissions="annotationPermissions"
             @save="handleSave"
             @annotation-added="handleAnnotationAdded"
             @annotation-deleted="handleAnnotationDeleted"
@@ -204,8 +219,8 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
           />
           <div v-else class="reader-empty">
             <div class="reader-empty-icon">PDF</div>
-            <strong>{{ selectedDocument?.processingStatus === 'failed' ? 'PDF 检查失败' : proofreadingLoading ? '正在加载校对数据…' : selectedDocument && !selectedChapter ? '请选择一个章节' : '选择或上传一份教材' }}</strong>
-            <span>{{ selectedDocument?.processingStatus === 'failed' ? '请检查文件后重试' : proofreadingLoading ? '正在从服务器读取本章校对意见' : selectedDocument && !selectedChapter ? '章节信息待建立或尚未选择章节' : documents.length ? '从左侧选择一份教材' : '尚未上传教材' }}</span>
+            <strong>{{ selectedDocument?.processingStatus === 'failed' ? 'PDF 检查失败' : proofreadingLoading ? '正在加载校对数据…' : selectedDocument ? 'PDF 正在准备' : '选择或上传一份教材' }}</strong>
+            <span>{{ selectedDocument?.processingStatus === 'failed' ? '请检查文件后重试' : proofreadingLoading ? '正在从服务器读取本章校对意见' : selectedDocument ? 'PDF 检查完成后即可浏览整本内容' : documents.length ? '从左侧选择一份教材' : '尚未上传教材' }}</span>
           </div>
         </div>
       </section>
@@ -226,7 +241,7 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
         </template>
         <div v-else class="review-empty">
           <div class="reader-empty-icon">✎</div>
-          <strong>选择或上传一份教材</strong>
+          <strong>{{ selectedDocument ? '请选择或建立章节' : '选择或上传一份教材' }}</strong>
           <span>{{ selectedDocument ? '选择章节后，校对意见会按章节分别保存' : '选择或上传一份教材' }}</span>
         </div>
       </aside>

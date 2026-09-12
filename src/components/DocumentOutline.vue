@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, nextTick, watch } from 'vue'
 import type { ApiDocument, ApiChapter, ChapterInput } from '../services/documentApi'
 
 const props = defineProps<{
@@ -16,8 +16,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [documentId: string]
   selectChapter: [chapterId: string]
-  createChapter: [payload: ChapterInput]
-  updateChapter: [chapterId: string, payload: ChapterInput]
+  createChapter: [payload: ChapterInput, onSuccess: () => void]
+  updateChapter: [chapterId: string, payload: ChapterInput, onSuccess: () => void]
 }>()
 
 const selectedDocument = computed(() =>
@@ -42,6 +42,8 @@ const documentStatusLabels = {
 
 const statusOptions = Object.entries(statusLabels) as Array<[ApiChapter['status'], string]>
 const formOpen = ref(false)
+const formSubmitting = ref(false)
+const drawerRef = ref<HTMLElement | null>(null)
 const editingChapterId = ref<string | null>(null)
 const form = reactive<ChapterInput>({
   title: '', order: 1, startPdfPage: 1, endPdfPage: 1, assigneeName: '', status: 'not_started',
@@ -67,7 +69,9 @@ function resetForm() {
 function openCreate() {
   editingChapterId.value = null
   resetForm()
+  formSubmitting.value = false
   formOpen.value = true
+  void nextTick(() => drawerRef.value?.querySelector<HTMLInputElement>('input')?.focus())
 }
 
 function openEdit(chapter: ApiChapter) {
@@ -78,16 +82,19 @@ function openEdit(chapter: ApiChapter) {
   form.endPdfPage = chapter.endPdfPage
   form.assigneeName = chapter.assigneeName ?? ''
   form.status = chapter.status
+  formSubmitting.value = false
   formOpen.value = true
+  void nextTick(() => drawerRef.value?.querySelector<HTMLInputElement>('input')?.focus())
 }
 
 function closeForm() {
+  if (formSubmitting.value) return
   formOpen.value = false
   editingChapterId.value = null
 }
 
 function submitForm() {
-  if (!selectedDocument.value || !form.title.trim()) return
+  if (!selectedDocument.value || !form.title.trim() || formSubmitting.value) return
   const payload: ChapterInput = {
     title: form.title.trim(),
     order: Number(form.order),
@@ -96,10 +103,29 @@ function submitForm() {
     assigneeName: form.assigneeName?.trim() || undefined,
     status: form.status,
   }
-  if (editingChapterId.value) emit('updateChapter', editingChapterId.value, payload)
-  else emit('createChapter', payload)
-  closeForm()
+  formSubmitting.value = true
+  const onSuccess = () => {
+    formSubmitting.value = false
+    formOpen.value = false
+    editingChapterId.value = null
+  }
+  if (editingChapterId.value) emit('updateChapter', editingChapterId.value, payload, onSuccess)
+  else emit('createChapter', payload, onSuccess)
 }
+
+function onGlobalKeydown(event: KeyboardEvent) {
+  if (formOpen.value && event.key === 'Escape' && !formSubmitting.value) {
+    event.preventDefault()
+    closeForm()
+  }
+}
+
+watch(() => props.chapterError, (error) => {
+  if (error) formSubmitting.value = false
+})
+
+onMounted(() => window.addEventListener('keydown', onGlobalKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
 
 </script>
 
@@ -161,18 +187,33 @@ function submitForm() {
 
       <button class="chapter-setup-button" type="button" @click="openCreate">{{ chapters.length ? '新增章节' : '建立章节' }}</button>
 
-      <form v-if="formOpen" class="chapter-form" @submit.prevent="submitForm">
-        <div class="chapter-form-heading">{{ editingChapterId ? '编辑章节' : '建立章节' }}</div>
-        <label>标题<input v-model="form.title" required maxlength="300" placeholder="如：第一章 总则" /></label>
-        <div class="chapter-form-grid">
-          <label>顺序<input v-model.number="form.order" min="1" type="number" /></label>
-          <label>负责人<input v-model="form.assigneeName" maxlength="120" placeholder="可选" /></label>
-          <label>起始 PDF 页<input v-model.number="form.startPdfPage" :max="selectedDocument.pageCount" min="1" type="number" /></label>
-          <label>结束 PDF 页<input v-model.number="form.endPdfPage" :max="selectedDocument.pageCount" min="1" type="number" /></label>
+      <div v-if="formOpen" ref="drawerRef" class="chapter-drawer" role="dialog" aria-label="章节设置" tabindex="-1">
+        <div class="chapter-drawer-header">
+          <div>
+            <span class="chapter-drawer-kicker">CHAPTER SETUP</span>
+            <h3>{{ editingChapterId ? '编辑章节' : '建立章节' }}</h3>
+          </div>
+          <button class="chapter-drawer-close" type="button" aria-label="关闭章节设置" :disabled="formSubmitting" @click="closeForm">×</button>
         </div>
-        <label>状态<select v-model="form.status"><option v-for="[value, label] in statusOptions" :key="value" :value="value">{{ label }}</option></select></label>
-        <div class="chapter-form-actions"><button type="button" @click="closeForm">取消</button><button class="primary" type="submit">保存</button></div>
-      </form>
+        <form class="chapter-form" @submit.prevent="submitForm">
+          <div class="chapter-form-body">
+            <p class="chapter-form-help">边看 PDF 边填写页码，章节会按 PDF 页范围分别保存。</p>
+            <label>标题<input v-model="form.title" required maxlength="300" placeholder="如：第一章 总则" :disabled="formSubmitting" /></label>
+            <div class="chapter-form-grid">
+              <label>顺序<input v-model.number="form.order" min="1" type="number" :disabled="formSubmitting" /></label>
+              <label>负责人<input v-model="form.assigneeName" maxlength="120" placeholder="可选" :disabled="formSubmitting" /></label>
+              <label>起始 PDF 页<input v-model.number="form.startPdfPage" :max="selectedDocument.pageCount" min="1" type="number" :disabled="formSubmitting" /></label>
+              <label>结束 PDF 页<input v-model.number="form.endPdfPage" :max="selectedDocument.pageCount" min="1" type="number" :disabled="formSubmitting" /></label>
+            </div>
+            <label>状态<select v-model="form.status" :disabled="formSubmitting"><option v-for="[value, label] in statusOptions" :key="value" :value="value">{{ label }}</option></select></label>
+            <p v-if="chapterError" class="chapter-form-error" role="alert">{{ chapterError }}</p>
+          </div>
+          <div class="chapter-form-actions">
+            <button type="button" :disabled="formSubmitting" @click="closeForm">取消</button>
+            <button class="primary" type="submit" :disabled="formSubmitting || chapterLoading">{{ formSubmitting ? '保存中…' : '保存' }}</button>
+          </div>
+        </form>
+      </div>
     </template>
     <div v-else class="chapter-empty">章节信息待建立</div>
 
@@ -188,7 +229,7 @@ function submitForm() {
 </template>
 
 <style scoped>
-.outline-panel { display: flex; flex-direction: column; min-width: 0; padding: 20px 12px 14px; background: #f8f9fb; border-right: 1px solid #dce1e9; }
+.outline-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; padding: 20px 12px 14px; background: #f8f9fb; border-right: 1px solid #dce1e9; }
 .outline-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 7px 16px; }
 .panel-kicker { color: #99a2b2; font-size: 9px; font-weight: 700; letter-spacing: .14em; }
 h2 { margin: 4px 0 0; color: #253047; font-size: 17px; }
@@ -208,7 +249,7 @@ h2 { margin: 4px 0 0; color: #253047; font-size: 17px; }
 .doc-card-copy strong { overflow: hidden; color: #354159; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .doc-card-copy span { margin-top: 3px; color: #929cad; font-size: 10px; }
 .chapter-label { display: flex; justify-content: space-between; padding: 0 8px 8px; color: #8791a2; font-size: 10px; font-weight: 700; }
-.chapter-list { display: flex; flex-direction: column; gap: 3px; }
+.chapter-list { display: flex; flex: 1; flex-direction: column; gap: 3px; min-height: 0; overflow-y: auto; padding-right: 2px; }
 .chapter-item { display: flex; align-items: center; }
 .chapter-row { position: relative; display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 10px 5px 10px 8px; text-align: left; background: transparent; border: 0; border-radius: 7px; }
 .chapter-row:hover, .chapter-row.active { background: #e8edf5; }
@@ -228,14 +269,27 @@ h2 { margin: 4px 0 0; color: #253047; font-size: 17px; }
 .chapter-empty { padding: 15px 8px; color: #a1aab7; font-size: 10px; text-align: center; background: #f3f5f8; border: 1px dashed #dce2ea; border-radius: 6px; }
 .chapter-setup-button { width: 100%; margin-top: 8px; padding: 7px; color: #49698f; font-size: 10px; background: #f1f5fa; border: 1px solid #d8e2ee; border-radius: 6px; }
 .chapter-setup-button:hover { background: #e7eef8; }
-.chapter-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 10px; background: #fff; border: 1px solid #dce4ee; border-radius: 7px; }
-.chapter-form-heading { color: #4b5d78; font-size: 11px; font-weight: 700; }
-.chapter-form label { display: flex; flex-direction: column; gap: 4px; color: #758197; font-size: 9px; }
-.chapter-form input, .chapter-form select { width: 100%; padding: 6px 7px; color: #3d4b64; font-size: 10px; background: #fbfcfd; border: 1px solid #dfe5ed; border-radius: 4px; }
-.chapter-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-.chapter-form-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
-.chapter-form-actions button { padding: 5px 8px; color: #718096; font-size: 9px; background: transparent; border: 1px solid #dce2ea; border-radius: 4px; }
+.chapter-drawer { position: fixed; top: 78px; left: 16px; z-index: 30; display: flex; flex-direction: column; width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 94px); overflow: hidden; background: #fff; border: 1px solid #cfd9e7; border-radius: 12px; box-shadow: 0 20px 55px rgba(25, 37, 57, .24); }
+.chapter-drawer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px 14px; color: #2e3d56; background: #f7f9fc; border-bottom: 1px solid #e3e8ef; }
+.chapter-drawer-kicker { color: #8b98aa; font-size: 9px; font-weight: 700; letter-spacing: .14em; }
+.chapter-drawer h3 { margin: 5px 0 0; font-size: 17px; }
+.chapter-drawer-close { display: grid; width: 30px; height: 30px; place-items: center; padding: 0; color: #718098; font-size: 22px; line-height: 1; background: transparent; border: 1px solid transparent; border-radius: 6px; }
+.chapter-drawer-close:hover { color: #30496d; background: #e9eef6; }
+.chapter-form { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.chapter-form-body { display: flex; flex-direction: column; gap: 13px; min-height: 0; overflow-y: auto; padding: 18px 20px 22px; }
+.chapter-form-help { margin: 0; color: #78869b; font-size: 11px; line-height: 1.5; }
+.chapter-form label { display: flex; flex-direction: column; gap: 6px; color: #68788f; font-size: 11px; font-weight: 600; }
+.chapter-form input, .chapter-form select { width: 100%; padding: 9px 10px; color: #33425b; font-size: 13px; background: #fbfcfd; border: 1px solid #d6dfe9; border-radius: 6px; }
+.chapter-form input:focus, .chapter-form select:focus { border-color: #6d8fb9; outline: 2px solid rgba(109, 143, 185, .18); }
+.chapter-form input:disabled, .chapter-form select:disabled { cursor: wait; background: #f1f4f8; }
+.chapter-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px 10px; }
+.chapter-form-error { margin: 0; padding: 10px 11px; color: #a44e4e; font-size: 11px; line-height: 1.5; background: #fff2f0; border: 1px solid #f0c9c3; border-radius: 6px; }
+.chapter-form-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: auto; padding: 13px 20px 16px; background: #fff; border-top: 1px solid #e3e8ef; }
+.chapter-form-actions button { min-width: 76px; padding: 9px 13px; color: #66758a; font-size: 12px; background: #fff; border: 1px solid #d6dfe9; border-radius: 6px; }
+.chapter-form-actions button:disabled, .chapter-drawer-close:disabled { cursor: wait; opacity: .6; }
+.chapter-form-actions button:hover:not(:disabled) { background: #f3f6fa; }
 .chapter-form-actions .primary { color: #fff; background: #4e6f9d; border-color: #4e6f9d; }
+.chapter-form-actions .primary:hover:not(:disabled) { background: #3f608d; }
 .outline-note { margin: 9px 7px 0; color: #71819a; font-size: 9px; }
 .outline-error { margin: 7px 7px 0; color: #a55555; font-size: 9px; line-height: 1.4; }
 .outline-footer { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin-top: auto; padding: 14px 7px 0; border-top: 1px solid #e5e9ef; }
