@@ -22,6 +22,42 @@ export type OcrJobStatus =
 
 export type OcrEngine = 'paddleocr' | 'ocrmypdf' | 'tesseract' | 'manual'
 
+export type PageTextSource = 'pdf_text' | 'ocr' | 'none'
+
+export type PageTextStatus =
+  | 'pending'
+  | 'extracting'
+  | 'ready'
+  | 'ocr_required'
+  | 'failed'
+
+export type DocumentTextJobStatus = 'queued' | 'processing' | 'completed' | 'failed'
+
+export type TextQualityFlag =
+  | 'empty_text'
+  | 'too_little_text'
+  | 'replacement_chars'
+  | 'low_printable_ratio'
+  | 'suspicious_glyphs'
+  | 'usable_native_text'
+
+export interface PageTextQuality {
+  usable: boolean
+  flags: TextQualityFlag[]
+  charCount: number
+  nonWhitespaceCharCount: number
+  replacementCharacterCount: number
+  printableRatio: number
+  cjkCharCount: number
+  cjkRatio: number
+  lineCount: number
+  wordCount: number
+  textItemCount: number
+  bboxCount: number
+  controlCharacterRatio: number
+  suspiciousGlyphRatio: number
+}
+
 export type DocumentAssetKind =
   | 'original-pdf'
   | 'searchable-pdf'
@@ -79,6 +115,11 @@ export interface Page {
   /** Printed textbook page label; intentionally separate from pdfPage. */
   printedPage?: string
   chapterId?: string
+  textSource?: PageTextSource
+  textStatus?: PageTextStatus
+  textCharCount?: number
+  textQuality?: PageTextQuality
+  textUpdatedAt?: string
 }
 
 export interface Chapter {
@@ -123,17 +164,23 @@ export type TextBlockType =
   | 'heading'
   | 'footnote'
   | 'table'
-  | 'caption'
-  | 'header'
-  | 'footer'
-  | 'list-item'
-  | 'unknown'
+  | 'list'
+  | 'other'
 
 export interface BoundingBox {
   x: number
   y: number
   width: number
   height: number
+}
+
+export interface PdfPointCoordinateSystem {
+  unit: 'pt'
+  origin: 'top-left'
+  xAxis: 'right'
+  yAxis: 'down'
+  pageWidth: number
+  pageHeight: number
 }
 
 export interface PolygonPoint {
@@ -146,14 +193,69 @@ export interface PageTextBlock {
   documentId: string
   /** Physical PDF page number, one-based. */
   pdfPage: number
+  order: number
+  type: TextBlockType
   text: string
-  normalizedText: string
-  blockType: TextBlockType
-  readingOrder: number
-  /** OCR confidence normalized to the inclusive range 0..1. */
-  confidence: number
-  bbox: BoundingBox
-  polygon?: readonly PolygonPoint[]
-  engine: OcrEngine
-  modelVersion: string
+  bbox?: BoundingBox
+  source: Exclude<PageTextSource, 'none'>
+  /** OCR-only confidence normalized to 0..1; absent for native PDF text. */
+  confidence?: number
+}
+
+export interface PageTextArtifact {
+  documentId: string
+  /** Physical PDF page number, one-based. */
+  pdfPage: number
+  source: PageTextSource
+  status: PageTextStatus
+  charCount: number
+  quality: PageTextQuality
+  coordinateSystem: PdfPointCoordinateSystem | null
+  blocks: PageTextBlock[]
+  updatedAt: string
+  errorMessage?: string
+}
+
+export interface DocumentTextJob {
+  id: string
+  documentId: string
+  status: DocumentTextJobStatus
+  totalPages: number
+  processedPages: number
+  nativeTextPages: number
+  ocrRequiredPages: number
+  failedPages: number
+  createdAt: string
+  startedAt?: string
+  updatedAt: string
+  completedAt?: string
+  errorMessage?: string
+  metrics?: {
+    totalSeconds: number
+    peakRssMb: number
+  }
+}
+
+export interface ChapterTextBundle {
+  documentId: string
+  chapterId: string
+  startPdfPage: number
+  endPdfPage: number
+  blocks: Array<Pick<PageTextBlock, 'pdfPage' | 'id' | 'type' | 'text' | 'source' | 'confidence'>>
+}
+
+export interface OcrPageInput {
+  documentId: string
+  pdfPage: number
+  originalPdfPath: string
+}
+
+export interface OcrPageResult {
+  documentId: string
+  pdfPage: number
+  blocks: PageTextBlock[]
+}
+
+export interface OcrProvider {
+  processPage(input: OcrPageInput): Promise<OcrPageResult>
 }

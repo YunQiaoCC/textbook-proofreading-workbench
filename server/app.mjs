@@ -4,6 +4,7 @@ import path from 'node:path'
 import { createServerConfig } from './config.mjs'
 import { FileBackedDocumentRepository } from './repositories/fileBackedDocumentRepository.mjs'
 import { FileBackedProofreadingRepository } from './repositories/fileBackedProofreadingRepository.mjs'
+import { FileBackedTextRepository } from './repositories/fileBackedTextRepository.mjs'
 import { LocalDocumentStorage } from './services/localDocumentStorage.mjs'
 import { PopplerInspectionService } from './services/popplerInspection.mjs'
 import { DocumentReadService } from './services/documentReadService.mjs'
@@ -12,6 +13,8 @@ import { MAX_PROOFREADING_BODY_BYTES, ProofreadingService } from './services/pro
 import { HttpError, UploadSessionService } from './services/uploadSessionService.mjs'
 import { DocumentLifecycleCoordinator } from './services/documentLifecycleCoordinator.mjs'
 import { DocumentDeletionService } from './services/documentDeletionService.mjs'
+import { NativePdfTextExtractor } from './services/nativePdfTextExtractor.mjs'
+import { DocumentTextService } from './services/documentTextService.mjs'
 
 const MAX_JSON_BODY = 64 * 1024
 
@@ -79,6 +82,15 @@ function errorResponse(error) {
       headers: error.headers,
     }
   }
+  if (error?.code === 'document_not_found') {
+    return { statusCode: 404, body: { error: error.code, message: 'document not found' } }
+  }
+  if (error?.code === 'document_not_ready') {
+    return { statusCode: 409, body: { error: error.code, message: error.message } }
+  }
+  if (error?.code === 'invalid_pdf_page') {
+    return { statusCode: 400, body: { error: error.code, message: error.message } }
+  }
   console.error(error)
   return {
     statusCode: 500,
@@ -86,7 +98,7 @@ function errorResponse(error) {
   }
 }
 
-async function handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService, documentDeletionService) {
+async function handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService, documentDeletionService, documentTextService) {
   const segments = routeSegments(request.url ?? '/')
 
   if (segments.length === 2 && segments[0] === 'api' && segments[1] === 'documents') {
@@ -107,6 +119,44 @@ async function handleRequest(request, response, uploadService, documentReadServi
       return
     }
     throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+  }
+
+  if (
+    segments.length === 5 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'text' &&
+    segments[4] === 'extract'
+  ) {
+    if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    sendJson(response, 202, await documentTextService.start(segments[2]))
+    return
+  }
+
+  if (
+    segments.length === 5 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'text' &&
+    ['status', 'summary'].includes(segments[4])
+  ) {
+    if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    sendJson(response, 200, await documentTextService.status(segments[2]))
+    return
+  }
+
+  if (
+    segments.length === 6 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'pages' &&
+    segments[5] === 'text'
+  ) {
+    if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    const artifact = await documentTextService.page(segments[2], Number(segments[4]))
+    if (!artifact) throw new HttpError(404, 'page_text_not_found', 'page text has not been extracted')
+    sendJson(response, 200, artifact)
+    return
   }
 
   // Legacy/document-scope compatibility layer. New UI writes chapter scope.
@@ -250,12 +300,25 @@ export async function createIngestionServer(options = {}) {
     lifecycleCoordinator,
     documentExists: async (documentId) => Boolean(await documentRepository.getById(documentId)),
   })
+  const textRepository = new FileBackedTextRepository(config.storageRoot)
   const documentReadService = new DocumentReadService({ documentRepository, documentStorage })
   const chapterService = new ChapterService({ documentRepository })
   const proofreadingService = new ProofreadingService({ documentRepository, proofreadingRepository })
+  const nativeTextExtractor = options.nativeTextExtractor ?? new NativePdfTextExtractor({
+    pdftotextBin: options.pdftotextBin,
+    timeoutMs: options.textExtractionPageTimeoutMs,
+  })
+  const documentTextService = new DocumentTextService({
+    documentRepository,
+    documentStorage,
+    textRepository,
+    extractor: nativeTextExtractor,
+    lifecycleCoordinator,
+  })
   const documentDeletionService = new DocumentDeletionService({
     documentRepository,
     proofreadingRepository,
+    textRepository,
     documentStorage,
     lifecycleCoordinator,
   })
@@ -267,6 +330,7 @@ export async function createIngestionServer(options = {}) {
   await documentRepository.init()
   await proofreadingRepository.init()
   await inspectionService.init()
+  await documentTextService.init()
   const uploadService = new UploadSessionService({
     storageRoot: config.storageRoot,
     maxDocumentSize: config.maxDocumentSize,
@@ -274,11 +338,12 @@ export async function createIngestionServer(options = {}) {
     documentStorage,
     documentRepository,
     inspectionService,
+    onDocumentReady: (document) => documentTextService.start(document.id),
   })
   await uploadService.init()
 
   const server = createHttpServer((request, response) => {
-    void handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService, documentDeletionService).catch((error) => {
+    void handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService, documentDeletionService, documentTextService).catch((error) => {
       if (!response.headersSent) {
         const result = errorResponse(error)
         sendJson(response, result.statusCode, result.body, result.headers)
@@ -303,6 +368,9 @@ export async function createIngestionServer(options = {}) {
     chapterService,
     proofreadingRepository,
     proofreadingService,
+    textRepository,
+    documentTextService,
+    nativeTextExtractor,
     uploadService,
     documentDeletionService,
     lifecycleCoordinator,

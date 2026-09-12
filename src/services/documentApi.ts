@@ -2,6 +2,7 @@ import type {
   Chapter,
   Document,
   DocumentInspectionSummary,
+  DocumentTextJob,
   OriginalPdfAsset,
   Page,
 } from '../models/document'
@@ -86,6 +87,14 @@ export function updateChapter(documentId: string, chapterId: string, payload: Ch
 
 export function deleteDocument(documentId: string) {
   return requestJson<void>(documentPath(documentId), { method: 'DELETE' })
+}
+
+export function startDocumentTextExtraction(documentId: string) {
+  return requestJson<DocumentTextJob>(`${documentPath(documentId)}/text/extract`, { method: 'POST' })
+}
+
+export function getDocumentTextStatus(documentId: string) {
+  return requestJson<DocumentTextJob | null>(`${documentPath(documentId)}/text/status`)
 }
 
 export function documentFileUrl(documentId: string) {

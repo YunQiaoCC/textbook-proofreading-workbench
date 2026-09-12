@@ -122,3 +122,7 @@ app.use(inklayerVuePlugin)
 - React SDK: https://github.com/Laomai-codefee/inklayer-react
 - Vue SDK: https://github.com/Laomai-codefee/inklayer-vue
 - React Starter: https://github.com/Laomai-codefee/inklayer-react-starter
+
+## Document text pipeline
+
+Native PDF text extraction, canonical text rules, page artifacts, quality heuristics, job recovery, and the future OCR boundary are documented in [docs/document-text-pipeline.md](docs/document-text-pipeline.md).

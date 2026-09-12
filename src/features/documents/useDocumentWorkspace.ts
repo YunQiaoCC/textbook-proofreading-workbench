@@ -1,10 +1,12 @@
 import { computed, onUnmounted, ref } from 'vue'
-import type { Chapter, Page } from '../../models/document'
+import type { Chapter, DocumentTextJob, Page } from '../../models/document'
 import { ApiError } from '../../services/apiClient'
 import { clearProofreadingClientState } from '../../services/proofreadingStorage'
 import {
   getDocument,
   getDocumentPages,
+  getDocumentTextStatus,
+  startDocumentTextExtraction,
   deleteDocument as deleteDocumentRequest,
   createChapter,
   listChapters,
@@ -40,6 +42,8 @@ export function useDocumentWorkspace() {
   const chapterError = ref('')
   const deletingDocumentId = ref<string | null>(null)
   const deleteError = ref('')
+  const textSummary = ref<DocumentTextJob | null>(null)
+  const textError = ref('')
   const selectedDocument = computed(() =>
     documents.value.find((document) => document.id === selectedDocumentId.value) ?? null,
   )
@@ -49,6 +53,7 @@ export function useDocumentWorkspace() {
 
   let operationId = 0
   let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let textPollTimer: ReturnType<typeof setTimeout> | null = null
   let pollingDocumentId: string | null = null
   let pollingDeadline = 0
 
@@ -57,6 +62,40 @@ export function useDocumentWorkspace() {
     pollTimer = null
     pollingDocumentId = null
     pollingDeadline = 0
+  }
+
+  function stopTextPolling() {
+    if (textPollTimer) clearTimeout(textPollTimer)
+    textPollTimer = null
+  }
+
+  async function refreshTextStatus(documentId: string) {
+    try {
+      const summary = await getDocumentTextStatus(documentId)
+      if (selectedDocumentId.value !== documentId) return
+      textSummary.value = summary
+      textError.value = ''
+      if (summary && ['queued', 'processing'].includes(summary.status)) {
+        stopTextPolling()
+        textPollTimer = setTimeout(() => { void refreshTextStatus(documentId) }, POLL_INTERVAL_MS)
+      }
+    } catch (requestError) {
+      if (selectedDocumentId.value === documentId) {
+        textError.value = readableError(requestError, '文本状态读取失败')
+      }
+    }
+  }
+
+  async function restartTextExtraction() {
+    const documentId = selectedDocumentId.value
+    if (!documentId) return
+    textError.value = ''
+    try {
+      textSummary.value = await startDocumentTextExtraction(documentId)
+      void refreshTextStatus(documentId)
+    } catch (requestError) {
+      textError.value = readableError(requestError, '文本重新解析启动失败')
+    }
   }
 
   function replaceDocument(document: ApiDocument) {
@@ -84,6 +123,7 @@ export function useDocumentWorkspace() {
         return
       }
       if (latest?.processingStatus === 'failed') error.value = 'inspection failed，请检查 PDF 后重试'
+      if (latest?.processingStatus === 'ready') void refreshTextStatus(documentId)
       stopPolling()
     }
 
@@ -117,6 +157,9 @@ export function useDocumentWorkspace() {
     const requestOperationId = ++operationId
     stopPolling()
     selectedDocumentId.value = documentId
+    stopTextPolling()
+    textSummary.value = null
+    textError.value = ''
     pages.value = []
     chapters.value = []
     selectedChapterId.value = null
@@ -137,6 +180,7 @@ export function useDocumentWorkspace() {
       pages.value = pageResponse.pages
       chapters.value = chapterResponse.chapters
       selectedChapterId.value = chapterResponse.chapters[0]?.id ?? null
+      void refreshTextStatus(documentId)
       if (isProcessing(detail.document)) schedulePolling(documentId)
     } catch (requestError) {
       if (requestOperationId === operationId) {
@@ -206,6 +250,8 @@ export function useDocumentWorkspace() {
 
       if (selectedDocumentId.value === documentId) {
         selectedDocumentId.value = null
+        stopTextPolling()
+        textSummary.value = null
         pages.value = []
         chapters.value = []
         selectedChapterId.value = null
@@ -240,6 +286,9 @@ export function useDocumentWorkspace() {
 
       if (!preferred) {
         selectedDocumentId.value = null
+        stopTextPolling()
+        textSummary.value = null
+        textError.value = ''
         pages.value = []
         chapters.value = []
         selectedChapterId.value = null
@@ -256,7 +305,10 @@ export function useDocumentWorkspace() {
     }
   }
 
-  onUnmounted(stopPolling)
+  onUnmounted(() => {
+    stopPolling()
+    stopTextPolling()
+  })
 
   return {
     documents,
@@ -272,6 +324,9 @@ export function useDocumentWorkspace() {
     chapterError,
     deletingDocumentId,
     deleteError,
+    textSummary,
+    textError,
+    restartTextExtraction,
     loadDocuments,
     selectDocument,
     selectChapter,

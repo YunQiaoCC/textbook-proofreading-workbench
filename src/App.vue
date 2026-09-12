@@ -50,6 +50,9 @@ const {
   deletingDocumentId,
   deleteError,
   deleteDocumentById,
+  textSummary,
+  textError,
+  restartTextExtraction,
 } = useDocumentWorkspace()
 
 const {
@@ -212,11 +215,14 @@ function onAnnotationSelected(annotation: Annotation | IAnnotationStore | null) 
           :collapsed="leftSidebarCollapsed"
           :deleting-document-id="deletingDocumentId"
           :delete-error="deleteError"
+          :text-summary="textSummary"
+          :text-error="textError"
           @select="onDocumentSelected"
           @select-chapter="onChapterSelected"
           @create-chapter="onChapterCreated"
           @update-chapter="onChapterUpdated"
           @delete-document="onDocumentDelete"
+          @extract-text="restartTextExtraction"
         />
         <button
           class="sidebar-toggle"

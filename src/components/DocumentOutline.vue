@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, nextTick, watch } from 'vue'
 import type { ApiDocument, ApiChapter, ChapterInput } from '../services/documentApi'
+import type { DocumentTextJob } from '../models/document'
 
 const props = defineProps<{
   documents: readonly ApiDocument[]
@@ -14,6 +15,8 @@ const props = defineProps<{
   collapsed: boolean
   deletingDocumentId: string | null
   deleteError: string
+  textSummary: DocumentTextJob | null
+  textError: string
 }>()
 
 const emit = defineEmits<{
@@ -22,6 +25,7 @@ const emit = defineEmits<{
   createChapter: [payload: ChapterInput, onSuccess: () => void]
   updateChapter: [chapterId: string, payload: ChapterInput, onSuccess: () => void]
   deleteDocument: [documentId: string]
+  extractText: []
 }>()
 
 const selectedDocument = computed(() =>
@@ -48,10 +52,6 @@ const statusOptions = Object.entries(statusLabels) as Array<[ApiChapter['status'
 const formOpen = ref(false)
 const formSubmitting = ref(false)
 const deleteTarget = ref<ApiDocument | null>(null)
-const deleteConfirmation = ref('')
-const deleteConfirmationMatches = computed(() =>
-  Boolean(deleteTarget.value && deleteConfirmation.value === deleteTarget.value.title),
-)
 const drawerRef = ref<HTMLElement | null>(null)
 const editingChapterId = ref<string | null>(null)
 const form = reactive<ChapterInput>({
@@ -125,17 +125,15 @@ function submitForm() {
 function openDelete(document: ApiDocument) {
   if (props.deletingDocumentId) return
   deleteTarget.value = document
-  deleteConfirmation.value = ''
 }
 
 function closeDelete() {
   if (props.deletingDocumentId) return
   deleteTarget.value = null
-  deleteConfirmation.value = ''
 }
 
 function submitDelete() {
-  if (!deleteTarget.value || !deleteConfirmationMatches.value || props.deletingDocumentId) return
+  if (!deleteTarget.value || props.deletingDocumentId) return
   emit('deleteDocument', deleteTarget.value.id)
 }
 
@@ -153,6 +151,12 @@ function onGlobalKeydown(event: KeyboardEvent) {
 
 watch(() => props.documents, (documents) => {
   if (deleteTarget.value && !documents.some((document) => document.id === deleteTarget.value?.id) && !props.deletingDocumentId) {
+    closeDelete()
+  }
+})
+
+watch(() => props.deletingDocumentId, (documentId) => {
+  if (!documentId && deleteTarget.value && !props.documents.some((document) => document.id === deleteTarget.value?.id)) {
     closeDelete()
   }
 })
@@ -202,7 +206,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
 
     <div v-if="selectedDocument" class="doc-card">
       <div class="doc-card-icon">§</div>
-      <div class="doc-card-copy"><strong>{{ selectedDocument.title }}</strong><span>{{ selectedDocument.pageCount }} 页 · {{ documentStatusLabel(selectedDocument.processingStatus) }}</span></div>
+      <div class="doc-card-copy">
+        <strong>{{ selectedDocument.title }}</strong>
+        <span>{{ selectedDocument.pageCount }} 页 · {{ documentStatusLabel(selectedDocument.processingStatus) }}</span>
+        <span v-if="textSummary?.status === 'processing' || textSummary?.status === 'queued'">文本解析中 {{ textSummary.processedPages }} / {{ textSummary.totalPages }}</span>
+        <span v-else-if="textSummary?.status === 'completed'">文本已准备 · 原生文本 {{ textSummary.nativeTextPages }} 页 · 待 OCR {{ textSummary.ocrRequiredPages }} 页</span>
+        <span v-else-if="textSummary?.status === 'failed'" class="text-status-error">文本解析失败 · {{ textSummary.failedPages }} 页</span>
+        <span v-else-if="textError" class="text-status-error">{{ textError }}</span>
+        <button v-if="textSummary?.status === 'failed'" class="text-retry" type="button" @click="emit('extractText')">重新解析</button>
+      </div>
     </div>
 
     <div class="chapter-label">
@@ -274,17 +286,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
     <Teleport to="body">
       <div v-if="deleteTarget" class="document-delete-backdrop">
         <section class="document-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="document-delete-title">
-          <h2 id="document-delete-title">&#21024;&#38500;&#25945;&#26448;</h2>
-          <p class="document-delete-target">{{ deleteTarget.title }}</p>
+          <h2 id="document-delete-title">删除教材？</h2>
+          <p class="document-delete-target">《{{ deleteTarget.title }}》</p>
           <p>&#23558;&#21024;&#38500;&#35813;&#25945;&#26448;&#12289;&#31456;&#33410;&#21450;&#26657;&#23545;&#24847;&#35265;&#12290;&#27492;&#25805;&#20316;&#19981;&#33021;&#20174;&#24037;&#20316;&#21488;&#25764;&#38144;&#12290;</p>
           <p>&#21382;&#21490;&#22791;&#20221;&#21487;&#33021;&#26242;&#26102;&#20445;&#30041;&#21103;&#26412;&#12290;</p>
-          <label class="document-delete-label">&#35831;&#36755;&#20837;&#23436;&#25972;&#25945;&#26448;&#26631;&#39064;&#25110;&#25991;&#20214;&#21517;
-            <input v-model="deleteConfirmation" type="text" autocomplete="off" :disabled="Boolean(deletingDocumentId)" />
-          </label>
           <p v-if="deleteError" class="document-delete-error" role="alert">{{ deleteError }}</p>
           <div class="document-delete-actions">
             <button type="button" :disabled="Boolean(deletingDocumentId)" @click="closeDelete">&#21462;&#28040;</button>
-            <button class="danger" type="button" :disabled="!deleteConfirmationMatches || Boolean(deletingDocumentId)" @click="submitDelete">{{ deletingDocumentId ? '&#21024;&#38500;&#20013;&#8230;' : '&#30830;&#35748;&#21024;&#38500;' }}</button>
+            <button class="danger" type="button" :disabled="Boolean(deletingDocumentId)" @click="submitDelete">{{ deletingDocumentId ? '&#21024;&#38500;&#20013;&#8230;' : '&#30830;&#35748;&#21024;&#38500;' }}</button>
           </div>
         </section>
       </div>
@@ -312,6 +321,8 @@ h2 { margin: 4px 0 0; color: #253047; font-size: 17px; }
 .doc-card-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .doc-card-copy strong { overflow: hidden; color: #354159; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .doc-card-copy span { margin-top: 3px; color: #929cad; font-size: 10px; }
+.doc-card-copy .text-status-error { color: #a44e4e; }
+.text-retry { align-self: flex-start; margin-top: 5px; padding: 3px 6px; color: #49698f; font-size: 9px; background: #fff; border: 1px solid #cfd9e7; border-radius: 4px; }
 .chapter-label { display: flex; justify-content: space-between; padding: 0 8px 8px; color: #8791a2; font-size: 10px; font-weight: 700; }
 .chapter-list { display: flex; flex: 1; flex-direction: column; gap: 3px; min-height: 0; overflow-y: auto; padding-right: 2px; }
 .chapter-item { display: flex; align-items: center; }

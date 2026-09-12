@@ -112,6 +112,7 @@ export class UploadSessionService {
     documentStorage,
     documentRepository,
     inspectionService,
+    onDocumentReady = () => undefined,
     now = () => new Date(),
   }) {
     this.uploadRoot = path.join(storageRoot, 'temp', 'uploads')
@@ -120,6 +121,7 @@ export class UploadSessionService {
     this.documentStorage = documentStorage
     this.documentRepository = documentRepository
     this.inspectionService = inspectionService
+    this.onDocumentReady = onDocumentReady
     this.now = now
     this.locks = new Map()
   }
@@ -407,6 +409,11 @@ export class UploadSessionService {
             inspectionSummary,
           }
           await this.documentRepository.saveBundle({ document, asset, pages, inspectionSummary })
+          queueMicrotask(() => {
+            Promise.resolve(this.onDocumentReady(document)).catch((error) => {
+              console.error('failed to queue native text extraction', error)
+            })
+          })
           return { uploadSession: publicSession(session), document, asset, inspectionSummary }
         } catch (error) {
           document = { ...document, processingStatus: 'failed', updatedAt: this.now().toISOString() }
