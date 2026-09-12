@@ -38,7 +38,7 @@ This is a deduplication key, not a sequence number or security boundary. It deli
 
 ## Evidence contract
 
-`evidence` is always an array. Static issues may use an empty array. A verified `verify` issue must contain at least one item. Each item contains:
+`evidence` is always an array. Static issues may use an empty array. Any candidate marked `verified` must contain at least one evidence item: no evidence means no `verified` status. Each item contains:
 
 - `sourceType`: a controlled v0.1 source kind;
 - `authorityAxis`: `normative`, `academic`, or `other`;
@@ -55,9 +55,8 @@ The states are `pending`, `accepted`, `modified`, and `rejected`. Every newly em
 ## Cross-field invariants
 
 - `static` normally requires no retrieval and uses `not_required`.
-- `verify` requires real source checking before `verified`; without retrieval it remains `unverified`, `insufficient_evidence`, or `manual_check_required`.
-- `verify` plus `verified` requires non-empty evidence.
+- `verify` requires real source checking before `verified`; without completed retrieval it remains `unverified`, `insufficient_evidence`, or `manual_check_required` and cannot use `confirmed_error`.
+- Any `verified` candidate requires non-empty evidence.
 - `extractionReliability: low` requires `manual_check_required` and forbids `confirmed_error` until reliable visual, OCR, or human verification exists.
 - A new candidate must have `humanResolution: pending`.
 - Evidence and jurisdiction/temporal/dispute fields must describe what was actually established, not what was assumed.
-

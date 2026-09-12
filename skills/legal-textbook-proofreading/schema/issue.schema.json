@@ -210,10 +210,9 @@
     {
       "if": {
         "properties": {
-          "ruleType": { "const": "verify" },
           "verificationStatus": { "const": "verified" }
         },
-        "required": ["ruleType", "verificationStatus"]
+        "required": ["verificationStatus"]
       },
       "then": {
         "properties": {
@@ -227,6 +226,24 @@
           "extractionReliability": { "const": "low" }
         },
         "required": ["extractionReliability"]
+      },
+      "then": {
+        "properties": {
+          "judgement": {
+            "not": { "const": "confirmed_error" }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "ruleType": { "const": "verify" },
+          "verificationStatus": {
+            "not": { "const": "verified" }
+          }
+        },
+        "required": ["ruleType", "verificationStatus"]
       },
       "then": {
         "properties": {

@@ -8,6 +8,7 @@ const skillRoot = path.join(repositoryRoot, 'skills', 'legal-textbook-proofreadi
 const schemaPath = path.join(skillRoot, 'schema', 'issue.schema.json')
 const casesPath = path.join(skillRoot, 'evals', 'cases.jsonl')
 const goldenRoot = path.join(skillRoot, 'evals', 'golden')
+const verificationFixturesPath = path.join(skillRoot, 'evals', 'verification-invariants.json')
 const failures = []
 
 const frozenEnums = {
@@ -130,10 +131,38 @@ function stableIssueId(issue) {
   return `ltp_${sha256(canonical).slice(0, 16)}`
 }
 
+function contractInvariantErrors(issue) {
+  const errors = []
+  if (issue.humanResolution !== 'pending') errors.push('new AI candidate must remain pending')
+  if (issue.ruleType === 'static') {
+    if (issue.retrievalRequired !== 'no') errors.push('static issue must use retrievalRequired=no')
+    const allowedStatus = issue.extractionReliability === 'low' ? 'manual_check_required' : 'not_required'
+    if (issue.verificationStatus !== allowedStatus) errors.push('static issue has inconsistent verificationStatus')
+  }
+  if (issue.ruleType === 'verify') {
+    if (issue.retrievalRequired !== 'must') errors.push('verify issue must use retrievalRequired=must')
+    if (issue.verificationStatus === 'not_required') errors.push('verify issue cannot use not_required')
+    if (issue.verificationStatus !== 'verified' && issue.judgement === 'confirmed_error') {
+      errors.push('verify issue cannot use confirmed_error without verified status')
+    }
+  }
+  if (issue.verificationStatus === 'verified' && (!Array.isArray(issue.evidence) || issue.evidence.length === 0)) {
+    errors.push('verified issue requires evidence')
+  }
+  if (issue.extractionReliability === 'low') {
+    if (issue.verificationStatus !== 'manual_check_required') errors.push('low extraction requires manual_check_required')
+    if (issue.judgement === 'confirmed_error') errors.push('low extraction forbids confirmed_error')
+  }
+  if (issue.disputeStatus === 'academic_dispute' && issue.judgement === 'confirmed_error') {
+    errors.push('academic dispute must not be confirmed_error')
+  }
+  return errors
+}
+
 const companions = [
   'SKILL.md', 'output_contract.md', 'legal_rubric.md', 'citation_policy.md',
   'uncertainty_policy.md', 'schema/issue.schema.json', 'evals/cases.jsonl',
-  'evals/golden/cases.golden.json',
+  'evals/golden/cases.golden.json', 'evals/verification-invariants.json',
 ]
 for (const relativePath of companions) {
   if (!existsSync(path.join(skillRoot, relativePath))) fail(`missing companion file: ${relativePath}`)
@@ -147,6 +176,62 @@ if (schema) {
   for (const [field, values] of Object.entries(frozenEnums)) {
     const actual = schema.properties?.[field]?.enum
     if (JSON.stringify(actual) !== JSON.stringify(values)) fail(`schema enum drift: ${field}`)
+  }
+}
+
+const verificationFixtures = parseJson(verificationFixturesPath)
+let verificationFixtureCount = 0
+if (!Array.isArray(verificationFixtures)) {
+  fail('evals/verification-invariants.json: expected an array')
+} else if (schema) {
+  const baseFixtureIssue = {
+    schemaVersion: '0.1',
+    id: '',
+    documentId: 'doc-synth-guardrail',
+    chapterId: 'ch-guardrail',
+    pdfPage: 1,
+    blockId: 'blk-guardrail',
+    originalText: '合成核验不变量测试句。',
+    issueType: 'article_number',
+    ruleType: 'verify',
+    severity: 'major',
+    extractionReliability: 'high',
+    verificationStatus: 'unverified',
+    retrievalRequired: 'must',
+    evidence: [],
+    judgement: 'likely_error',
+    suggestion: '仅用于验证 contract。',
+    reason: '该句为合成 fixture，不代表真实法律结论。',
+    confidence: 'medium',
+    humanResolution: 'pending',
+  }
+  const fixtureIds = new Set()
+  for (const fixture of verificationFixtures) {
+    if (typeof fixture?.fixtureId !== 'string' || fixture.fixtureId.length === 0) {
+      fail('verification fixture is missing fixtureId')
+      continue
+    }
+    if (fixtureIds.has(fixture.fixtureId)) {
+      fail(`duplicate verification fixtureId ${fixture.fixtureId}`)
+      continue
+    }
+    fixtureIds.add(fixture.fixtureId)
+    const issue = { ...baseFixtureIssue, ...(fixture.overrides ?? {}) }
+    issue.id = stableIssueId(issue)
+    const errors = [
+      ...validateValue(issue, schema, schema),
+      ...contractInvariantErrors(issue),
+    ]
+    const actualValid = errors.length === 0
+    if (typeof fixture.expectedValid !== 'boolean') {
+      fail(`${fixture.fixtureId}: expectedValid must be boolean`)
+    } else if (actualValid !== fixture.expectedValid) {
+      fail(`${fixture.fixtureId}: expected valid=${fixture.expectedValid}, errors=${errors.join('; ') || 'none'}`)
+    } else if (!actualValid && fixture.expectedErrorIncludes && !errors.some((error) => error.includes(fixture.expectedErrorIncludes))) {
+      fail(`${fixture.fixtureId}: expected error containing ${JSON.stringify(fixture.expectedErrorIncludes)}, got ${errors.join('; ')}`)
+    } else {
+      verificationFixtureCount += 1
+    }
   }
 }
 
@@ -225,27 +310,8 @@ for (const golden of goldenEntries) {
   if (stableIds.has(issue.id)) fail(`${golden.caseId}: duplicate stable issue id ${issue.id}`)
   stableIds.add(issue.id)
 
-  if (issue.humanResolution !== 'pending') fail(`${golden.caseId}: new AI candidate must remain pending`)
-  if (issue.ruleType === 'static') {
-    if (issue.retrievalRequired !== 'no') fail(`${golden.caseId}: static issue must use retrievalRequired=no`)
-    const allowedStatus = issue.extractionReliability === 'low' ? 'manual_check_required' : 'not_required'
-    if (issue.verificationStatus !== allowedStatus) fail(`${golden.caseId}: static issue has inconsistent verificationStatus`)
-  }
-  if (issue.ruleType === 'verify') {
-    if (issue.retrievalRequired !== 'must') fail(`${golden.caseId}: verify issue must use retrievalRequired=must`)
-    if (issue.verificationStatus === 'not_required') fail(`${golden.caseId}: verify issue cannot use not_required`)
-  }
-  if (issue.verificationStatus === 'verified' && issue.evidence.length === 0) {
-    fail(`${golden.caseId}: verified issue requires evidence`)
-  }
+  for (const error of contractInvariantErrors(issue)) fail(`${golden.caseId}: ${error}`)
   if (issue.verificationStatus === 'verified') fail(`${golden.caseId}: foundation eval must not pretend retrieval occurred`)
-  if (issue.extractionReliability === 'low') {
-    if (issue.verificationStatus !== 'manual_check_required') fail(`${golden.caseId}: low extraction requires manual_check_required`)
-    if (issue.judgement === 'confirmed_error') fail(`${golden.caseId}: low extraction forbids confirmed_error`)
-  }
-  if (issue.disputeStatus === 'academic_dispute' && issue.judgement === 'confirmed_error') {
-    fail(`${golden.caseId}: academic dispute must not be confirmed_error`)
-  }
 
   const forbidden = golden.forbidden ?? {}
   if ((forbidden.issueTypes ?? []).includes(issue.issueType)) fail(`${golden.caseId}: expected issue uses forbidden issueType`)
@@ -277,9 +343,9 @@ if (failures.length > 0) {
 } else {
   console.log('Schema validation: PASS')
   console.log('Cross-field validation: PASS')
+  console.log(`Verification guardrail fixtures: ${verificationFixtureCount} passed`)
   console.log('Skill lint: PASS')
   console.log(`Eval cases: ${cases.length} (${positiveCount} positive, ${negativeCount} negative controls, ${adversarialCount} adversarial)`)
   console.log(`Stable issue IDs: ${stableIds.size} unique and deterministic`)
   console.log('External calls: none')
 }
-

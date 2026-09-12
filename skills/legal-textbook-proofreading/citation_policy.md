@@ -31,7 +31,7 @@ Use the `must`, `should`, and `no` triggers in [legal_rubric.md](legal_rubric.md
 ## Verification and evidence
 
 - Without actual source access, never write `verified` or claim that a proposition was checked.
-- `verify` plus `verified` requires at least one evidence item that directly supports the result.
+- Every `verified` candidate requires at least one evidence item that directly supports the result; no evidence means no `verified` status.
 - A citation that merely mentions the topic is not support; state the exact supported proposition in `supports`.
 - If sources conflict, are incomplete, secondary where primary authority is necessary, or do not establish the relevant time/jurisdiction, use `insufficient_evidence` or retain `unverified`.
 - Evidence titles, authors/issuers, dates, article/docket numbers, page numbers, and URLs must not be invented.
@@ -44,4 +44,3 @@ The v0.1 schema controls source types for consistent evaluation: `law`, `adminis
 ## Citation mismatch
 
 Review the legal proposition separately from its citation. A correct conclusion with an unrelated or inaccurate footnote can still produce `citation` or `legal_source_mismatch`; do not rewrite the correct conclusion as a substantive legal error.
-

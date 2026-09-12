@@ -6,8 +6,8 @@ Represent uncertainty explicitly. Evidence gaps must lower the strength of the j
 
 ## Required safeguards
 
-1. Insufficient evidence cannot support `confirmed_error`.
-2. Without actual source retrieval, do not claim verification or use `verificationStatus: verified`.
+1. A `verify` candidate can use `confirmed_error` only when `verificationStatus` is `verified`; `unverified`, `insufficient_evidence`, and `manual_check_required` cannot support that judgement.
+2. Without actual source retrieval, do not claim verification or use `verificationStatus: verified`. Every `verified` candidate must include at least one evidence item: no evidence means no `verified` status.
 3. `extractionReliability: low` requires `manual_check_required` and forbids `confirmed_error` until reliable visual, OCR, or human checking occurs.
 4. A genuine academic dispute is not a unique-answer error. Use `academic_dispute` and ordinarily `ambiguous`, unless sufficient evidence shows the text falsely presents a contested view as the sole clear rule.
 5. An unclear jurisdiction must not be assumed to be nationwide. Request qualification or human review.
@@ -36,4 +36,3 @@ Extraction reliability concerns the input and location. `confidence` concerns th
 ## Escalation to human review
 
 Use `humanReviewNote` for a concise, actionable limitation. Every candidate begins with `humanResolution: pending`; the model does not accept its own candidate. When uncertainty prevents a useful, locatable recommendation, do not emit an issue at all.
-

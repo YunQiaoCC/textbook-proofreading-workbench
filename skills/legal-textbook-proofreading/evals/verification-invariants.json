@@ -1,0 +1,56 @@
+[
+  {
+    "fixtureId": "verify-unverified-confirmed-error",
+    "overrides": {
+      "ruleType": "verify",
+      "verificationStatus": "unverified",
+      "judgement": "confirmed_error",
+      "retrievalRequired": "must",
+      "evidence": []
+    },
+    "expectedValid": false,
+    "expectedErrorIncludes": "verify issue cannot use confirmed_error without verified status"
+  },
+  {
+    "fixtureId": "verify-insufficient-evidence-confirmed-error",
+    "overrides": {
+      "ruleType": "verify",
+      "verificationStatus": "insufficient_evidence",
+      "judgement": "confirmed_error",
+      "retrievalRequired": "must",
+      "evidence": []
+    },
+    "expectedValid": false,
+    "expectedErrorIncludes": "verify issue cannot use confirmed_error without verified status"
+  },
+  {
+    "fixtureId": "verified-empty-evidence",
+    "overrides": {
+      "ruleType": "judgement",
+      "verificationStatus": "verified",
+      "judgement": "ambiguous",
+      "retrievalRequired": "should",
+      "evidence": []
+    },
+    "expectedValid": false,
+    "expectedErrorIncludes": "verified issue requires evidence"
+  },
+  {
+    "fixtureId": "verify-verified-evidence-confirmed-error",
+    "overrides": {
+      "ruleType": "verify",
+      "verificationStatus": "verified",
+      "judgement": "confirmed_error",
+      "retrievalRequired": "must",
+      "evidence": [
+        {
+          "sourceType": "law",
+          "authorityAxis": "normative",
+          "title": "Synthetic authoritative source",
+          "supports": "Synthetic proposition used only to test the contract invariant."
+        }
+      ]
+    },
+    "expectedValid": true
+  }
+]
