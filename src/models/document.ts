@@ -28,8 +28,15 @@ export type PageTextStatus =
   | 'pending'
   | 'extracting'
   | 'ready'
+  | 'suspicious'
   | 'ocr_required'
   | 'failed'
+
+export type PageTextClassification =
+  | 'native_ready'
+  | 'native_suspicious'
+  | 'ocr_required'
+  | 'ocr_not_needed'
 
 export type DocumentTextJobStatus = 'queued' | 'processing' | 'completed' | 'failed'
 
@@ -39,10 +46,16 @@ export type TextQualityFlag =
   | 'replacement_chars'
   | 'low_printable_ratio'
   | 'suspicious_glyphs'
+  | 'no_bbox'
+  | 'excessive_cjk_spacing'
+  | 'fragmented_layout'
   | 'usable_native_text'
 
 export interface PageTextQuality {
   usable: boolean
+  suspicious: boolean
+  hardFailure: boolean
+  classification: Exclude<PageTextClassification, 'ocr_not_needed'>
   flags: TextQualityFlag[]
   charCount: number
   nonWhitespaceCharCount: number
@@ -56,6 +69,8 @@ export interface PageTextQuality {
   bboxCount: number
   controlCharacterRatio: number
   suspiciousGlyphRatio: number
+  cjkSpacingRatio: number
+  averageNonWhitespaceCharsPerBlock: number
 }
 
 export type DocumentAssetKind =
@@ -119,6 +134,7 @@ export interface Page {
   textStatus?: PageTextStatus
   textCharCount?: number
   textQuality?: PageTextQuality
+  textClassification?: PageTextClassification
   textUpdatedAt?: string
 }
 
@@ -208,9 +224,17 @@ export interface PageTextArtifact {
   pdfPage: number
   source: PageTextSource
   status: PageTextStatus
+  classification: PageTextClassification
   charCount: number
   quality: PageTextQuality
   coordinateSystem: PdfPointCoordinateSystem | null
+  visualTriage?: {
+    method: 'raster_ink'
+    dpi: number
+    inkPixelRatio: number
+    substantiveThreshold: number
+    hasSubstantiveVisualContent: boolean
+  }
   blocks: PageTextBlock[]
   updatedAt: string
   errorMessage?: string
@@ -223,7 +247,10 @@ export interface DocumentTextJob {
   totalPages: number
   processedPages: number
   nativeTextPages: number
+  nativeReadyPages: number
+  nativeSuspiciousPages: number
   ocrRequiredPages: number
+  ocrNotNeededPages: number
   failedPages: number
   createdAt: string
   startedAt?: string

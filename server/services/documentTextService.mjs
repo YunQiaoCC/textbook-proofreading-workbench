@@ -14,12 +14,29 @@ function emptyQuality() {
   return evaluateNativeTextQuality('', { lineCount: 0, wordCount: 0, bboxCount: 0 })
 }
 
+function statusForClassification(classification) {
+  if (classification === 'native_suspicious') return 'suspicious'
+  if (classification === 'ocr_required') return 'ocr_required'
+  return 'ready'
+}
+
+function triageReason(artifact) {
+  if (artifact.classification === 'ocr_not_needed') return 'empty_native_text_and_visually_blank'
+  if (artifact.classification === 'ocr_required' && artifact.visualTriage?.hasSubstantiveVisualContent) {
+    return 'empty_native_text_with_substantive_visual_content'
+  }
+  if (artifact.status === 'failed') return 'native_extraction_failed'
+  const prefix = artifact.classification === 'native_suspicious' ? 'native_text_suspicious' : 'hard_quality_trigger'
+  return `${prefix}:${artifact.quality.flags.join(',') || 'unclassified'}`
+}
+
 export class DocumentTextService {
-  constructor({ documentRepository, documentStorage, textRepository, extractor, lifecycleCoordinator, now = () => new Date() }) {
+  constructor({ documentRepository, documentStorage, textRepository, extractor, visualTriage, lifecycleCoordinator, now = () => new Date() }) {
     this.documentRepository = documentRepository
     this.documentStorage = documentStorage
     this.textRepository = textRepository
     this.extractor = extractor
+    this.visualTriage = visualTriage
     this.lifecycleCoordinator = lifecycleCoordinator
     this.now = now
     this.queue = []
@@ -89,7 +106,10 @@ export class DocumentTextService {
       totalPages: document.pageCount,
       processedPages: 0,
       nativeTextPages: 0,
+      nativeReadyPages: 0,
+      nativeSuspiciousPages: 0,
       ocrRequiredPages: 0,
+      ocrNotNeededPages: 0,
       failedPages: 0,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -136,6 +156,13 @@ export class DocumentTextService {
     })
   }
 
+  async saveTriageReportIfDocumentExists(documentId, report) {
+    return this.lifecycleCoordinator.withDocumentLock(documentId, async () => {
+      if (!(await this.documentRepository.getById(documentId))) throw new DocumentNotFoundError(documentId)
+      await this.textRepository.writeTriageReport(report)
+    })
+  }
+
   async run(documentId, { resume }) {
     const record = await this.documentRepository.readRecord(documentId)
     if (!record?.document || !record.asset) throw new DocumentNotFoundError(documentId)
@@ -143,6 +170,10 @@ export class DocumentTextService {
     const pdfPath = this.documentStorage.resolveAbsolutePath(asset)
     const previous = await this.textRepository.readSummary(documentId)
     if (!previous) return
+    const previousTriageReport = await this.textRepository.readTriageReport(documentId)
+    const originalPreviousStatuses = new Map(
+      (previousTriageReport?.candidates ?? []).map((candidate) => [candidate.pdfPage, candidate.previousStatus]),
+    )
     const startedClock = performance.now()
     let peakRssBytes = process.memoryUsage().rss
     let summary = {
@@ -151,7 +182,10 @@ export class DocumentTextService {
       totalPages: document.pageCount,
       processedPages: 0,
       nativeTextPages: 0,
+      nativeReadyPages: 0,
+      nativeSuspiciousPages: 0,
       ocrRequiredPages: 0,
+      ocrNotNeededPages: 0,
       failedPages: 0,
       startedAt: this.now().toISOString(),
       updatedAt: this.now().toISOString(),
@@ -159,44 +193,44 @@ export class DocumentTextService {
       errorMessage: undefined,
     }
     await this.saveSummaryIfDocumentExists(documentId, summary)
+    const candidates = []
 
     for (let pdfPage = 1; pdfPage <= document.pageCount; pdfPage += 1) {
-      const existing = resume ? await this.textRepository.readPage(documentId, pdfPage) : null
-      let artifact = existing && ['ready', 'ocr_required'].includes(existing.status) ? existing : null
+      const previousArtifact = await this.textRepository.readPage(documentId, pdfPage)
+      const existing = resume ? previousArtifact : null
+      let artifact = existing?.classification && ['ready', 'suspicious', 'ocr_required'].includes(existing.status) ? existing : null
       if (!artifact) {
         const updatedAt = this.now().toISOString()
         try {
           const extracted = await this.extractor.extractPage({ documentId, pdfPath, pdfPage })
           const quality = evaluateNativeTextQuality(extracted.text, extracted)
-          artifact = quality.usable
-            ? {
-                documentId,
-                pdfPage,
-                source: 'pdf_text',
-                status: 'ready',
-                charCount: quality.charCount,
-                quality,
-                coordinateSystem: extracted.coordinateSystem,
-                blocks: extracted.blocks,
-                updatedAt,
-              }
-            : {
-                documentId,
-                pdfPage,
-                source: 'none',
-                status: 'ocr_required',
-                charCount: quality.charCount,
-                quality,
-                coordinateSystem: extracted.coordinateSystem,
-                blocks: [],
-                updatedAt,
-              }
+          let classification = quality.classification
+          let visualTriage
+          if (quality.nonWhitespaceCharCount === 0) {
+            visualTriage = await this.visualTriage.classifyPage({ documentId, pdfPath, pdfPage })
+            classification = visualTriage.hasSubstantiveVisualContent ? 'ocr_required' : 'ocr_not_needed'
+          }
+          const hasNativeText = ['native_ready', 'native_suspicious'].includes(classification)
+          artifact = {
+            documentId,
+            pdfPage,
+            source: hasNativeText ? 'pdf_text' : 'none',
+            status: statusForClassification(classification),
+            classification,
+            charCount: quality.charCount,
+            quality,
+            coordinateSystem: extracted.coordinateSystem,
+            ...(visualTriage ? { visualTriage } : {}),
+            blocks: hasNativeText ? extracted.blocks : [],
+            updatedAt,
+          }
         } catch (error) {
           artifact = {
             documentId,
             pdfPage,
             source: 'none',
             status: 'failed',
+            classification: 'ocr_required',
             charCount: 0,
             quality: emptyQuality(),
             coordinateSystem: null,
@@ -209,9 +243,29 @@ export class DocumentTextService {
       }
 
       summary.processedPages += 1
-      if (artifact.status === 'ready') summary.nativeTextPages += 1
-      else if (artifact.status === 'ocr_required') summary.ocrRequiredPages += 1
-      else summary.failedPages += 1
+      if (artifact.classification === 'native_ready') {
+        summary.nativeReadyPages += 1
+        summary.nativeTextPages += 1
+      } else if (artifact.classification === 'native_suspicious') {
+        summary.nativeSuspiciousPages += 1
+        summary.nativeTextPages += 1
+      } else if (artifact.classification === 'ocr_required' && artifact.status !== 'failed') {
+        summary.ocrRequiredPages += 1
+      } else if (artifact.classification === 'ocr_not_needed') {
+        summary.ocrNotNeededPages += 1
+      } else {
+        summary.failedPages += 1
+      }
+      if (artifact.classification !== 'native_ready' || artifact.status === 'failed') {
+        candidates.push({
+          pdfPage,
+          previousStatus: originalPreviousStatuses.get(pdfPage) ?? previousArtifact?.status ?? 'pending',
+          qualityFlags: artifact.quality.flags,
+          charCount: artifact.charCount,
+          recommendedClass: artifact.classification,
+          reason: triageReason(artifact),
+        })
+      }
       summary.updatedAt = this.now().toISOString()
       peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss)
       await this.saveSummaryIfDocumentExists(documentId, summary)
@@ -229,5 +283,10 @@ export class DocumentTextService {
       ...(summary.failedPages > 0 ? { errorMessage: `${summary.failedPages} page(s) failed` } : {}),
     }
     await this.saveSummaryIfDocumentExists(documentId, summary)
+    await this.saveTriageReportIfDocumentExists(documentId, {
+      documentId,
+      generatedAt: this.now().toISOString(),
+      candidates,
+    })
   }
 }

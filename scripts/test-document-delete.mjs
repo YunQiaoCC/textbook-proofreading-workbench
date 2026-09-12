@@ -145,13 +145,15 @@ async function main() {
 
     await app.textRepository.writeSummary({
       id: 'text-job-a', documentId: 'document-a', status: 'completed', totalPages: 20,
-      processedPages: 20, nativeTextPages: 20, ocrRequiredPages: 0, failedPages: 0,
+      processedPages: 20, nativeTextPages: 20, nativeReadyPages: 20, nativeSuspiciousPages: 0,
+      ocrRequiredPages: 0, ocrNotNeededPages: 0, failedPages: 0,
       createdAt: timestamp, startedAt: timestamp, updatedAt: timestamp, completedAt: timestamp,
     })
     await app.textRepository.writePage({
-      documentId: 'document-a', pdfPage: 1, source: 'pdf_text', status: 'ready', charCount: 4,
+      documentId: 'document-a', pdfPage: 1, source: 'pdf_text', status: 'ready', classification: 'native_ready', charCount: 4,
       quality: { usable: true, flags: ['usable_native_text'] }, coordinateSystem: null, blocks: [], updatedAt: timestamp,
     })
+    await app.textRepository.writeTriageReport({ documentId: 'document-a', generatedAt: timestamp, candidates: [] })
 
     const deleted = await request(baseUrl, '/api/documents/document-a', { method: 'DELETE' })
     assert.equal(deleted.response.status, 204)
@@ -184,6 +186,7 @@ async function main() {
     await assertMissing(path.join(root, 'metadata', 'proofreading', 'document-a'))
     await assertMissing(path.join(root, 'text', 'document-a'))
     await assertMissing(path.join(root, 'metadata', 'text', 'document-a.json'))
+    await assertMissing(path.join(root, 'metadata', 'text', 'document-a-ocr-triage.json'))
 
     const secondDelete = await request(baseUrl, '/api/documents/document-a', { method: 'DELETE' })
     assert.equal(secondDelete.response.status, 404)

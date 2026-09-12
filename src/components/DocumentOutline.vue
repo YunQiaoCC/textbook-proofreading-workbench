@@ -210,7 +210,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
         <strong>{{ selectedDocument.title }}</strong>
         <span>{{ selectedDocument.pageCount }} 页 · {{ documentStatusLabel(selectedDocument.processingStatus) }}</span>
         <span v-if="textSummary?.status === 'processing' || textSummary?.status === 'queued'">文本解析中 {{ textSummary.processedPages }} / {{ textSummary.totalPages }}</span>
-        <span v-else-if="textSummary?.status === 'completed'">文本已准备 · 原生文本 {{ textSummary.nativeTextPages }} 页 · 待 OCR {{ textSummary.ocrRequiredPages }} 页</span>
+        <span v-else-if="textSummary?.status === 'completed'">文本已准备 · 可直接使用 {{ textSummary.nativeReadyPages ?? textSummary.nativeTextPages }} 页 · 需人工检查 {{ textSummary.nativeSuspiciousPages ?? 0 }} 页 · 需 OCR {{ textSummary.ocrRequiredPages }} 页</span>
         <span v-else-if="textSummary?.status === 'failed'" class="text-status-error">文本解析失败 · {{ textSummary.failedPages }} 页</span>
         <span v-else-if="textError" class="text-status-error">{{ textError }}</span>
         <button v-if="textSummary?.status === 'failed'" class="text-retry" type="button" @click="emit('extractText')">重新解析</button>

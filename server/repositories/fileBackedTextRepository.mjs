@@ -51,6 +51,13 @@ export class FileBackedTextRepository {
     return result
   }
 
+  triageReportPath(documentId) {
+    assertDocumentId(documentId)
+    const result = path.resolve(this.metadataRoot, `${documentId}-ocr-triage.json`)
+    if (!isWithinRoot(this.metadataRoot, result)) throw new Error('OCR triage metadata path escapes storage root')
+    return result
+  }
+
   async writePage(artifact) {
     assertDocumentId(artifact?.documentId)
     assertPdfPage(artifact?.pdfPage)
@@ -80,11 +87,25 @@ export class FileBackedTextRepository {
     }
   }
 
+  async writeTriageReport(report) {
+    assertDocumentId(report?.documentId)
+    await atomicWriteJson(this.triageReportPath(report.documentId), report)
+  }
+
+  async readTriageReport(documentId) {
+    try {
+      return await readJson(this.triageReportPath(documentId))
+    } catch (error) {
+      if (error?.code === 'ENOENT') return null
+      throw error
+    }
+  }
+
   async listSummaries() {
     const entries = await readdir(this.metadataRoot, { withFileTypes: true })
     const summaries = []
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+      if (!entry.isFile() || !entry.name.endsWith('.json') || entry.name.endsWith('-ocr-triage.json')) continue
       try {
         summaries.push(await readJson(path.join(this.metadataRoot, entry.name)))
       } catch (error) {
@@ -98,6 +119,7 @@ export class FileBackedTextRepository {
     await Promise.all([
       rm(this.documentTextDirectory(documentId), { recursive: true, force: true }),
       rm(this.summaryPath(documentId), { force: true }),
+      rm(this.triageReportPath(documentId), { force: true }),
     ])
   }
 }

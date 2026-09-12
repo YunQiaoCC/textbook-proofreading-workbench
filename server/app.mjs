@@ -15,6 +15,7 @@ import { DocumentLifecycleCoordinator } from './services/documentLifecycleCoordi
 import { DocumentDeletionService } from './services/documentDeletionService.mjs'
 import { NativePdfTextExtractor } from './services/nativePdfTextExtractor.mjs'
 import { DocumentTextService } from './services/documentTextService.mjs'
+import { PdfPageVisualTriage } from './services/pdfPageVisualTriage.mjs'
 
 const MAX_JSON_BODY = 64 * 1024
 
@@ -308,11 +309,15 @@ export async function createIngestionServer(options = {}) {
     pdftotextBin: options.pdftotextBin,
     timeoutMs: options.textExtractionPageTimeoutMs,
   })
+  const pageVisualTriage = options.pageVisualTriage ?? new PdfPageVisualTriage({
+    pdftoppmBin: options.pdftoppmBin,
+  })
   const documentTextService = new DocumentTextService({
     documentRepository,
     documentStorage,
     textRepository,
     extractor: nativeTextExtractor,
+    visualTriage: pageVisualTriage,
     lifecycleCoordinator,
   })
   const documentDeletionService = new DocumentDeletionService({
@@ -371,6 +376,7 @@ export async function createIngestionServer(options = {}) {
     textRepository,
     documentTextService,
     nativeTextExtractor,
+    pageVisualTriage,
     uploadService,
     documentDeletionService,
     lifecycleCoordinator,
