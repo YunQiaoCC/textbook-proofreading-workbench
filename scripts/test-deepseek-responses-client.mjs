@@ -29,6 +29,40 @@ await test('structured-response-parsed', () => assert.deepEqual(result.data, { o
 await test('reasoning-ignored', () => assert.equal(JSON.stringify(result).includes('private reasoning'), false))
 await test('usage-parsed', () => assert.deepEqual(result.usage, { input_tokens: 11, cached_tokens: 3, output_tokens: 7, reasoning_tokens: 2, total_tokens: 18 }))
 
+await test('http-400-schema-error-is-safely-categorized', async () => {
+  const response = {
+    ok: false,
+    status: 400,
+    async json() { return { error: { type: 'invalid_request_error', code: 'invalid_json_schema', message: 'ARBITRARY PROVIDER DETAIL MUST NOT ESCAPE' } } },
+  }
+  await assert.rejects(
+    new DeepSeekResponsesClient({ apiKey: 'sensitive', fetch: async () => response }).requestStructured({ instructions: '', input: '', schema, schemaName: 'x', reasoningEffort: 'low', maxOutputTokens: 1 }),
+    (error) => {
+      assert.equal(error.code, 'deepseek_bad_response')
+      assert.equal(error.upstreamErrorCategory, 'invalid_json_schema')
+      assert.equal(error.upstreamErrorCode, 'invalid_json_schema')
+      assert.equal(JSON.stringify(error).includes('ARBITRARY PROVIDER DETAIL'), false)
+      return true
+    },
+  )
+})
+await test('arbitrary-provider-message-and-unsafe-code-are-discarded', async () => {
+  const response = {
+    ok: false,
+    status: 400,
+    async json() { return { error: { code: 'unsafe code containing spaces and provider detail', message: 'unclassified arbitrary detail' } } },
+  }
+  await assert.rejects(
+    new DeepSeekResponsesClient({ apiKey: 'sensitive', fetch: async () => response }).requestStructured({ instructions: '', input: '', schema, schemaName: 'x', reasoningEffort: 'low', maxOutputTokens: 1 }),
+    (error) => {
+      assert.equal(error.upstreamErrorCategory, 'unknown_bad_request')
+      assert.equal(error.upstreamErrorCode, undefined)
+      assert.equal(JSON.stringify(error).includes('arbitrary detail'), false)
+      return true
+    },
+  )
+})
+
 async function expectCode(name, response, code) {
   await test(name, async () => assert.rejects(new DeepSeekResponsesClient({ apiKey: 'sensitive', fetch: async () => response }).requestStructured({ instructions: '', input: '', schema, schemaName: 'x', reasoningEffort: 'low', maxOutputTokens: 1 }), (error) => error instanceof DeepSeekProviderError && error.code === code && !JSON.stringify(error).includes('sensitive')))
 }
@@ -43,5 +77,5 @@ await test('timeout-sanitized', async () => {
   const timeoutClient = new DeepSeekResponsesClient({ apiKey: 'x', timeoutMs: 5, fetch: async (_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))) })
   await assert.rejects(timeoutClient.requestStructured({ instructions: '', input: '', schema, schemaName: 'x', reasoningEffort: 'low', maxOutputTokens: 1 }), (error) => error.code === 'deepseek_timeout')
 })
-assert.equal(count, 22)
+assert.equal(count, 24)
 console.log(`deepseek-client-test-count=${count}`)

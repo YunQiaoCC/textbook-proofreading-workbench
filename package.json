@@ -23,6 +23,7 @@
     "test:auth": "node scripts/test-auth.mjs",
     "test:ai-review-runtime": "node scripts/test-deepseek-responses-client.mjs && node scripts/test-ai-review-runtime.mjs",
     "smoke:deepseek-production": "node scripts/smoke-deepseek-production.mjs",
+    "smoke:deepseek-screening-schema": "node scripts/smoke-deepseek-screening-schema.mjs",
     "smoke:yuandian-production": "node scripts/smoke-yuandian-production.mjs"
   },
   "dependencies": {

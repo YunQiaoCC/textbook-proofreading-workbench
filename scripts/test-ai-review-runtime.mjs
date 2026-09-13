@@ -5,20 +5,50 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createIngestionServer } from '../server/app.mjs'
-import { SCREENING_SCHEMA, FINALIZATION_SCHEMA, AI_REVIEW_QUEUE_CONCURRENCY } from '../server/ai/aiReviewRuntimeService.mjs'
+import {
+  AI_REVIEW_QUEUE_CONCURRENCY,
+  assertFinalShape,
+  assertScreeningShape,
+  MAX_CANDIDATES,
+  MAX_CLAIMS_PER_FINDING,
+  MAX_FINDINGS,
+  MAX_RETRIEVAL_CLAIMS,
+  normalizeFinalizationTransport,
+  normalizeScreeningTransport,
+} from '../server/ai/aiReviewRuntimeService.mjs'
+import {
+  FINALIZATION_TRANSPORT_SCHEMA,
+  SCREENING_TRANSPORT_SCHEMA,
+} from '../server/ai/deepseekTransportSchemas.mjs'
 import { DeepSeekProviderError } from '../server/ai/deepseekResponsesClient.mjs'
-import { validateCandidateIssue } from '../server/candidates/candidateContract.mjs'
+import { stableCandidateId, validateCandidateIssue } from '../server/candidates/candidateContract.mjs'
+import { validateRetrievalClaim } from '../server/retrieval/types.mjs'
 
 const timestamp = '2026-09-13T00:00:00.000Z'
 let testCount = 0
 async function test(name, operation) { await operation(); testCount += 1; console.log(`${name}=pass`) }
 function claimId(draftId, index = 0) { return `claim_${createHash('sha256').update(`${draftId}\n${index}`).digest('hex').slice(0, 16)}` }
 function usage(seed) { return { input_tokens: seed, cached_tokens: 1, output_tokens: seed + 1, reasoning_tokens: 1, total_tokens: seed * 2 + 1 } }
+function retrievalClaim(overrides = {}) {
+  return { kind: 'article_text', text: 'FOUND', knownSourceTitle: '', knownArticleNumber: '', jurisdiction: '', referenceDate: '', ...overrides }
+}
 function finding(overrides = {}) {
-  return { draftId: 'draft-1', pdfPage: 1, blockId: 'block-1', originalText: '错误表述', issueType: 'wording', ruleType: 'static', severity: 'minor', extractionReliability: 'high', retrievalRequired: 'no', suggestionDraft: '正确表述', reasonDraft: '静态语言问题', retrievalClaims: [], ...overrides }
+  return { draftId: 'draft-1', pdfPage: 1, blockId: 'block-1', originalText: '错误表述', issueType: 'wording', ruleType: 'static', severity: 'minor', extractionReliability: 'high', retrievalRequired: 'no', temporalContext: 'unspecified', disputeStatus: 'none', jurisdictionScope: '', suggestionDraft: '正确表述', reasonDraft: '静态语言问题', retrievalClaims: [], humanReviewNote: '', ...overrides }
 }
 function finalDraft(overrides = {}) {
-  return { draftId: 'draft-1', issueType: 'wording', ruleType: 'static', severity: 'minor', verificationStatus: 'not_required', retrievalRequired: 'no', judgement: 'confirmed_error', suggestion: '正确表述', reason: '静态语言问题', confidence: 'high', evidenceClaimIds: [], ...overrides }
+  return { draftId: 'draft-1', issueType: 'wording', ruleType: 'static', severity: 'minor', verificationStatus: 'not_required', retrievalRequired: 'no', judgement: 'confirmed_error', suggestion: '正确表述', reason: '静态语言问题', confidence: 'high', temporalContext: 'unspecified', disputeStatus: 'none', jurisdictionScope: '', humanReviewNote: '', correctedText: '', evidenceClaimIds: [], ...overrides }
+}
+
+const forbiddenSchemaKeywords = new Set(['minLength', 'minimum', 'maximum', 'pattern', 'maxItems', 'minItems', 'uniqueItems', 'oneOf', 'allOf', '$ref'])
+function assertDeepSeekTransportSchemaCompatible(schema, location = '$') {
+  assert.equal(schema && typeof schema === 'object' && !Array.isArray(schema), true, `${location} must be a schema object`)
+  for (const key of Object.keys(schema)) assert.equal(forbiddenSchemaKeywords.has(key), false, `${location} contains ${key}`)
+  if (schema.type === 'object') {
+    assert.equal(schema.additionalProperties, false, `${location} must reject additional properties`)
+    assert.deepEqual(new Set(schema.required), new Set(Object.keys(schema.properties)), `${location} must require every property`)
+    for (const [key, child] of Object.entries(schema.properties)) assertDeepSeekTransportSchemaCompatible(child, `${location}.${key}`)
+  }
+  if (schema.items) assertDeepSeekTransportSchemaCompatible(schema.items, `${location}[]`)
 }
 
 class MockModelClient {
@@ -76,6 +106,78 @@ async function fixture(app, documentId, pages = [{ classification: 'native_ready
   return chapter
 }
 
+await test('stage1-transport-schema-compatible', () => assertDeepSeekTransportSchemaCompatible(SCREENING_TRANSPORT_SCHEMA))
+await test('stage2-transport-schema-compatible', () => assertDeepSeekTransportSchemaCompatible(FINALIZATION_TRANSPORT_SCHEMA))
+await test('nested-retrieval-claim-all-required', () => {
+  const claimSchema = SCREENING_TRANSPORT_SCHEMA.properties.findings.items.properties.retrievalClaims.items
+  assert.deepEqual(new Set(claimSchema.required), new Set(Object.keys(claimSchema.properties)))
+})
+await test('forbidden-transport-schema-keywords-absent', () => {
+  assertDeepSeekTransportSchemaCompatible(SCREENING_TRANSPORT_SCHEMA)
+  assertDeepSeekTransportSchemaCompatible(FINALIZATION_TRANSPORT_SCHEMA)
+})
+await test('blank-screening-sentinels-omitted', () => {
+  const normalized = normalizeScreeningTransport({ findings: [finding({ blockId: '', jurisdictionScope: '', humanReviewNote: '' })] }).findings[0]
+  assert.equal('blockId' in normalized, false)
+  assert.equal('jurisdictionScope' in normalized, false)
+  assert.equal('humanReviewNote' in normalized, false)
+})
+await test('screening-neutral-enums-retained', () => {
+  const normalized = normalizeScreeningTransport({ findings: [finding()] }).findings[0]
+  assert.equal(normalized.temporalContext, 'unspecified')
+  assert.equal(normalized.disputeStatus, 'none')
+})
+await test('blank-claim-fields-omitted-before-validation', () => {
+  const normalized = normalizeScreeningTransport({ findings: [finding({ ruleType: 'verify', retrievalRequired: 'must', retrievalClaims: [retrievalClaim()] })] }).findings[0].retrievalClaims[0]
+  assert.deepEqual(normalized, { kind: 'article_text', text: 'FOUND' })
+})
+await test('blank-finalization-sentinels-omitted', () => {
+  const normalized = normalizeFinalizationTransport({ candidates: [finalDraft()] }).candidates[0]
+  assert.equal('jurisdictionScope' in normalized, false)
+  assert.equal('humanReviewNote' in normalized, false)
+  assert.equal('correctedText' in normalized, false)
+  assert.equal(normalized.temporalContext, 'unspecified')
+  assert.equal(normalized.disputeStatus, 'none')
+})
+await test('invalid-reference-date-rejected-after-normalization', () => {
+  const claim = normalizeScreeningTransport({ findings: [finding({ retrievalClaims: [retrievalClaim({ referenceDate: '2026-02-30' })] })] }).findings[0].retrievalClaims[0]
+  assert.throws(() => validateRetrievalClaim({ ...claim, claimId: 'claim_test', documentId: 'document', chapterId: 'chapter', pdfPage: 1 }), /referenceDate/u)
+})
+await test('zero-pdf-page-rejected-server-side', () => {
+  const normalized = normalizeScreeningTransport({ findings: [finding({ pdfPage: 0 })] })
+  assert.throws(() => assertScreeningShape(normalized), (error) => error.code === 'deepseek_output_invalid')
+})
+await test('negative-pdf-page-rejected-server-side', () => {
+  const normalized = normalizeScreeningTransport({ findings: [finding({ pdfPage: -1 })] })
+  assert.throws(() => assertScreeningShape(normalized), (error) => error.code === 'deepseek_output_invalid')
+})
+await test('findings-limit-enforced-server-side', () => {
+  const findings = Array.from({ length: MAX_FINDINGS + 1 }, (_, index) => finding({ draftId: `draft-${index}` }))
+  assert.throws(() => assertScreeningShape(normalizeScreeningTransport({ findings })), (error) => error.code === 'deepseek_output_invalid')
+})
+await test('claims-per-finding-limit-enforced-server-side', () => {
+  const retrievalClaims = Array.from({ length: MAX_CLAIMS_PER_FINDING + 1 }, (_, index) => retrievalClaim({ text: `claim-${index}` }))
+  assert.throws(() => assertScreeningShape(normalizeScreeningTransport({ findings: [finding({ retrievalClaims })] })), (error) => error.code === 'deepseek_output_invalid')
+})
+await test('total-retrieval-claims-limit-retained', () => assert.equal(MAX_RETRIEVAL_CLAIMS, 100))
+await test('candidate-limit-enforced-server-side', () => {
+  const candidates = Array.from({ length: MAX_CANDIDATES + 1 }, () => finalDraft())
+  assert.throws(() => assertFinalShape(normalizeFinalizationTransport({ candidates }), [finding()]), (error) => error.code === 'deepseek_output_invalid')
+})
+await test('duplicate-evidence-claim-ids-rejected-server-side', () => {
+  const normalized = normalizeFinalizationTransport({ candidates: [finalDraft({ evidenceClaimIds: ['claim_a', 'claim_a'] })] })
+  assert.throws(() => assertFinalShape(normalized, [finding()]), (error) => error.code === 'deepseek_output_invalid')
+})
+await test('empty-semantic-text-rejected-after-normalization', () => {
+  const normalized = normalizeScreeningTransport({ findings: [finding({ originalText: '   ' })] })
+  assert.throws(() => assertScreeningShape(normalized), (error) => error.code === 'deepseek_output_invalid')
+})
+await test('candidate-contract-stable-id-unchanged', () => {
+  const candidate = { schemaVersion: '0.1', id: '', documentId: 'document', chapterId: 'chapter', pdfPage: 1, blockId: 'block-1', originalText: '错误表述', issueType: 'wording', ruleType: 'static', severity: 'minor', extractionReliability: 'high', verificationStatus: 'not_required', retrievalRequired: 'no', evidence: [], judgement: 'confirmed_error', suggestion: '正确表述', reason: '静态语言问题', confidence: 'high', temporalContext: 'unspecified', disputeStatus: 'none', humanResolution: 'pending' }
+  candidate.id = stableCandidateId(candidate)
+  assert.deepEqual(validateCandidateIssue(candidate), [])
+})
+
 const root = await mkdtemp(path.join(tmpdir(), 'ai-review-runtime-'))
 const model = new MockModelClient()
 const retrieval = new MockRetrievalAdapter()
@@ -101,8 +203,8 @@ try {
   await test('stage1-receives-full-chapter-bundle', () => assert.equal(lowCall.input.chapter.pages.length, 3))
   await test('stage1-effort-low', () => assert.equal(lowCall.request.reasoningEffort, 'low'))
   await test('stage2-effort-high', () => assert.equal(highCall.request.reasoningEffort, 'high'))
-  await test('stage1-json-schema-bounded', () => assert.equal(SCREENING_SCHEMA.properties.findings.maxItems, 100))
-  await test('stage2-json-schema-bounded', () => assert.equal(FINALIZATION_SCHEMA.properties.candidates.maxItems, 100))
+  await test('stage1-uses-transport-schema', () => assert.deepEqual(lowCall.request.schema, SCREENING_TRANSPORT_SCHEMA))
+  await test('stage2-uses-transport-schema', () => assert.deepEqual(highCall.request.schema, FINALIZATION_TRANSPORT_SCHEMA))
   await test('queue-concurrency-one-contract', () => assert.equal(AI_REVIEW_QUEUE_CONCURRENCY, 1))
   await test('candidate-id-server-generated', () => assert.match(happy.candidates[0].candidate.id, /^ltp_[a-f0-9]{16}$/))
   await test('human-resolution-pending', () => assert.equal(happy.candidates[0].candidate.humanResolution, 'pending'))
@@ -119,10 +221,10 @@ try {
   const retrievalChapter = await fixture(app, 'retrieval-document')
   model.behaviors.set('retrieval-document', {
     findings: [
-      finding({ draftId: 'found', ruleType: 'verify', issueType: 'article_number', retrievalRequired: 'must', retrievalClaims: [{ kind: 'article_text', text: 'FOUND', knownSourceTitle: '示例法', knownArticleNumber: '第一条' }] }),
-      finding({ draftId: 'not-found', ruleType: 'verify', issueType: 'article_number', retrievalRequired: 'must', retrievalClaims: [{ kind: 'article_text', text: 'NOT_FOUND' }] }),
-      finding({ draftId: 'insufficient', ruleType: 'verify', issueType: 'article_number', retrievalRequired: 'must', retrievalClaims: [{ kind: 'article_text', text: 'INSUFFICIENT' }] }),
-      finding({ draftId: 'unavailable', ruleType: 'verify', issueType: 'article_number', retrievalRequired: 'must', retrievalClaims: [{ kind: 'article_text', text: 'UNAVAILABLE' }] }),
+      finding({ draftId: 'found', ruleType: 'verify', issueType: 'article_number', retrievalRequired: 'must', retrievalClaims: [retrievalClaim({ text: 'FOUND', knownSourceTitle: '示例法', knownArticleNumber: '第一条' })] }),
+      finding({ draftId: 'not-found', ruleType: 'verify', issueType: 'article_number', retrievalRequired: 'must', retrievalClaims: [retrievalClaim({ text: 'NOT_FOUND' })] }),
+      finding({ draftId: 'insufficient', ruleType: 'verify', issueType: 'article_number', retrievalRequired: 'must', retrievalClaims: [retrievalClaim({ text: 'INSUFFICIENT' })] }),
+      finding({ draftId: 'unavailable', ruleType: 'verify', issueType: 'article_number', retrievalRequired: 'must', retrievalClaims: [retrievalClaim({ text: 'UNAVAILABLE' })] }),
     ],
     candidates: (input) => [{ ...finalDraft({ draftId: 'found', ruleType: 'verify', issueType: 'article_number', verificationStatus: 'verified', retrievalRequired: 'must', judgement: 'confirmed_error', evidenceClaimIds: [claimId('found')] }) }],
   })
@@ -155,11 +257,27 @@ try {
   await test('block-id-mismatch-rejected', () => failureCase('block-mismatch-document', { findings: [finding({ blockId: 'invented-block' })] }, 'deepseek_output_invalid'))
   await test('page-outside-chapter-rejected', () => failureCase('page-outside-document', { findings: [finding({ pdfPage: 2 })] }, 'deepseek_output_invalid'))
   await test('controlled-enum-enforced', () => failureCase('enum-document', { findings: [finding({ severity: 'catastrophic' })] }, 'deepseek_output_invalid'))
+  await test('empty-required-semantic-text-rejected-after-normalization', () => failureCase('empty-text-document', { findings: [finding({ originalText: '   ' })] }, 'deepseek_output_invalid'))
+  await test('more-than-100-findings-rejected-server-side', () => failureCase('too-many-findings-document', { findings: Array.from({ length: MAX_FINDINGS + 1 }, (_, index) => finding({ draftId: `finding-${index}` })) }, 'deepseek_output_invalid'))
+  await test('more-than-3-claims-per-finding-rejected-server-side', () => failureCase('too-many-claims-document', { findings: [finding({ retrievalClaims: Array.from({ length: MAX_CLAIMS_PER_FINDING + 1 }, (_, index) => retrievalClaim({ text: `claim-${index}` })) })] }, 'deepseek_output_invalid'))
+  await test('total-retrieval-claim-limit-rejected-server-side', () => failureCase('too-many-total-claims-document', { findings: Array.from({ length: 51 }, (_, index) => finding({ draftId: `claim-finding-${index}`, retrievalClaims: [retrievalClaim({ text: `claim-${index}-a` }), retrievalClaim({ text: `claim-${index}-b` })] })) }, 'deepseek_output_invalid'))
   await test('unknown-evidence-claim-rejected', () => failureCase('unknown-evidence-document', { candidates: [finalDraft({ evidenceClaimIds: ['invented-claim'] })] }, 'deepseek_output_invalid'))
+  await test('duplicate-evidence-claim-ids-rejected', () => failureCase('duplicate-evidence-document', { candidates: [finalDraft({ evidenceClaimIds: ['duplicate', 'duplicate'] })] }, 'deepseek_output_invalid'))
+  await test('more-than-100-candidates-rejected-server-side', () => failureCase('too-many-candidates-document', { candidates: Array.from({ length: MAX_CANDIDATES + 1 }, () => finalDraft()) }, 'deepseek_output_invalid'))
   await test('model-candidate-id-field-rejected', () => failureCase('model-id-document', { candidates: [finalDraft({ id: 'model-controlled' })] }, 'deepseek_output_invalid'))
   await test('model-full-evidence-field-rejected', () => failureCase('model-evidence-document', { candidates: [finalDraft({ evidence: [{ title: 'invented' }] })] }, 'deepseek_output_invalid'))
   await test('invalid-candidate-fails-whole-run', () => failureCase('invalid-candidate-document', { candidates: [finalDraft({ ruleType: 'verify', retrievalRequired: 'must', verificationStatus: 'unverified', judgement: 'confirmed_error' })] }, 'candidate_validation_failed'))
   await test('deepseek-failure-becomes-ai-failed', () => failureCase('provider-failure-document', { screeningError: new DeepSeekProviderError('deepseek_rate_limited', { status: 429 }) }, 'deepseek_rate_limited'))
+  await test('sanitized-upstream-diagnostics-persist-without-provider-message', async () => {
+    const providerError = new DeepSeekProviderError('deepseek_bad_response', { status: 400, upstreamErrorCategory: 'invalid_json_schema', upstreamErrorCode: 'invalid_schema' })
+    providerError.providerMessage = 'SENSITIVE ARBITRARY UPSTREAM MESSAGE'
+    providerError.request = { prompt: 'SENSITIVE PROMPT', schema: 'SENSITIVE SCHEMA' }
+    const { workspace } = await failureCase('sanitized-diagnostic-document', { screeningError: providerError }, 'deepseek_bad_response')
+    assert.equal(workspace.aiRun.upstreamErrorCategory, 'invalid_json_schema')
+    assert.equal(workspace.aiRun.upstreamErrorCode, 'invalid_schema')
+    assert.equal(JSON.stringify(workspace).includes('SENSITIVE'), false)
+    assert.equal(JSON.stringify(logs).includes('SENSITIVE'), false)
+  })
   await test('no-text-fails-before-model', async () => { const before = model.calls.length; await failureCase('no-text-document', {}, 'chapter_text_unavailable', [{ classification: 'ocr_required', status: 'ocr_required', text: '' }]); assert.equal(model.calls.length, before) })
   await test('large-chapter-fails-without-truncation', async () => { const previous = app.aiReviewRuntimeService.maxChapterChars; app.aiReviewRuntimeService.maxChapterChars = 5; try { await failureCase('large-document', {}, 'chapter_text_too_large') } finally { app.aiReviewRuntimeService.maxChapterChars = previous } })
 

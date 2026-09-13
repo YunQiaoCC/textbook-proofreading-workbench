@@ -13,6 +13,15 @@ const ERROR_CODES = new Set([
   'deepseek_output_invalid',
   'deepseek_provider_error',
 ])
+const UPSTREAM_ERROR_CATEGORIES = new Set([
+  'invalid_json_schema',
+  'invalid_parameter',
+  'context_too_long',
+  'authentication',
+  'rate_limit',
+  'unknown_bad_request',
+])
+const SAFE_UPSTREAM_CODE = /^[A-Za-z0-9_.-]{1,80}$/u
 
 function cleanBaseUrl(value) {
   const url = new URL(value)
@@ -28,13 +37,19 @@ function positiveInteger(value, fallback) {
 }
 
 export class DeepSeekProviderError extends Error {
-  constructor(code, { status, usage, durationMs } = {}) {
+  constructor(code, { status, usage, durationMs, upstreamErrorCategory, upstreamErrorCode } = {}) {
     super(code)
     this.name = 'DeepSeekProviderError'
     this.code = ERROR_CODES.has(code) ? code : 'deepseek_provider_error'
     this.status = status
     this.usage = usage
     this.durationMs = durationMs
+    this.upstreamErrorCategory = UPSTREAM_ERROR_CATEGORIES.has(upstreamErrorCategory)
+      ? upstreamErrorCategory
+      : undefined
+    this.upstreamErrorCode = SAFE_UPSTREAM_CODE.test(upstreamErrorCode ?? '')
+      ? upstreamErrorCode
+      : undefined
   }
 }
 
@@ -107,6 +122,30 @@ function statusError(status) {
   return 'deepseek_bad_response'
 }
 
+function categoryFrom(status, machineValues, message) {
+  if (status === 401 || status === 403) return 'authentication'
+  if (status === 429) return 'rate_limit'
+  const diagnostic = [...machineValues, message].filter((value) => typeof value === 'string').join(' ').toLowerCase()
+  if (/(json.?schema|response.?format|schema.?validation)/u.test(diagnostic)) return 'invalid_json_schema'
+  if (/(context.?length|context.?too.?long|maximum.?context)/u.test(diagnostic)) return 'context_too_long'
+  if (/(auth|api.?key|permission)/u.test(diagnostic)) return 'authentication'
+  if (/(rate.?limit|too.?many.?requests)/u.test(diagnostic)) return 'rate_limit'
+  if (/(invalid.?parameter|invalid.?argument|invalid.?request)/u.test(diagnostic)) return 'invalid_parameter'
+  return 'unknown_bad_request'
+}
+
+async function sanitizedUpstreamError(response) {
+  let payload
+  try { payload = await response.json() } catch { payload = null }
+  const error = payload?.error && typeof payload.error === 'object' ? payload.error : {}
+  const machineValues = [error.code, error.type].filter((value) => typeof value === 'string')
+  const upstreamErrorCode = machineValues.find((value) => SAFE_UPSTREAM_CODE.test(value))
+  return {
+    upstreamErrorCategory: categoryFrom(response.status, machineValues, typeof error.message === 'string' ? error.message : ''),
+    ...(upstreamErrorCode ? { upstreamErrorCode } : {}),
+  }
+}
+
 export class DeepSeekResponsesClient {
   constructor(options = {}) {
     this.config = options.config ?? createDeepSeekConfig(options)
@@ -148,7 +187,12 @@ export class DeepSeekResponsesClient {
 
     const durationMs = this.now() - startedAt
     if (!response.ok) {
-      throw new DeepSeekProviderError(statusError(response.status), { status: response.status, durationMs })
+      const diagnostic = await sanitizedUpstreamError(response)
+      throw new DeepSeekProviderError(statusError(response.status), {
+        status: response.status,
+        durationMs,
+        ...diagnostic,
+      })
     }
     let payload
     try {

@@ -1,8 +1,22 @@
 import { createHash } from 'node:crypto'
-import { candidateIssueTypes, stableCandidateId, validateCandidateIssue } from '../candidates/candidateContract.mjs'
+import { stableCandidateId, validateCandidateIssue } from '../candidates/candidateContract.mjs'
 import { CLAIM_KINDS, validateRetrievalClaim } from '../retrieval/types.mjs'
 import { DeepSeekProviderError } from './deepseekResponsesClient.mjs'
 import { loadLegalSkillPrompt } from './legalSkillPrompt.mjs'
+import {
+  CONFIDENCES,
+  DISPUTE_STATUSES,
+  EXTRACTION_RELIABILITIES,
+  FINALIZATION_TRANSPORT_SCHEMA,
+  ISSUE_TYPES,
+  JUDGEMENTS,
+  RETRIEVAL_REQUIREMENTS,
+  RULE_TYPES,
+  SCREENING_TRANSPORT_SCHEMA,
+  SEVERITIES,
+  TEMPORAL_CONTEXTS,
+  VERIFICATION_STATUSES,
+} from './deepseekTransportSchemas.mjs'
 
 export const AI_REVIEW_QUEUE_CONCURRENCY = 1
 export const RETRIEVAL_CONCURRENCY = 3
@@ -13,60 +27,12 @@ export const MAX_CLAIMS_PER_FINDING = 3
 export const MAX_RETRIEVAL_CLAIMS = 100
 export const MAX_CANDIDATES = 100
 
-const ISSUE_TYPES = candidateIssueTypes()
-const RULE_TYPES = ['static', 'verify', 'judgement']
-const SEVERITIES = ['critical', 'major', 'minor', 'clarification']
-const EXTRACTION_RELIABILITIES = ['high', 'medium', 'low']
-const RETRIEVAL_REQUIREMENTS = ['must', 'should', 'no']
-const TEMPORAL_CONTEXTS = ['current', 'historical', 'mixed', 'unspecified']
-const DISPUTE_STATUSES = ['none', 'academic_dispute', 'judicial_divergence', 'unclear']
-const VERIFICATION_STATUSES = ['not_required', 'unverified', 'verified', 'insufficient_evidence', 'manual_check_required']
-const JUDGEMENTS = ['confirmed_error', 'likely_error', 'ambiguous', 'correct_but_misleading', 'correct_but_needs_qualification']
-const CONFIDENCES = ['high', 'medium', 'low']
-
-const retrievalClaimSchema = {
-  type: 'object', additionalProperties: false,
-  required: ['kind', 'text'],
-  properties: {
-    kind: { type: 'string', enum: CLAIM_KINDS }, text: { type: 'string', minLength: 1 },
-    knownSourceTitle: { type: 'string', minLength: 1 }, knownArticleNumber: { type: 'string', minLength: 1 },
-    jurisdiction: { type: 'string', minLength: 1 }, referenceDate: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
-  },
+export function screeningInstructions(policy) {
+  return `${policy}\n\nRuntime rules: screen conservatively; candidate drafts are not final errata; human review is authoritative; do not claim retrieval was performed; protect historical and disputed statements. Every transport field is required. Use blockId, jurisdictionScope, humanReviewNote, and unavailable retrieval claim fields as empty strings; use temporalContext=unspecified and disputeStatus=none or unclear when no stronger value is supported.`
 }
 
-export const SCREENING_SCHEMA = {
-  type: 'object', additionalProperties: false, required: ['findings'],
-  properties: { findings: { type: 'array', maxItems: MAX_FINDINGS, items: {
-    type: 'object', additionalProperties: false,
-    required: ['draftId', 'pdfPage', 'originalText', 'issueType', 'ruleType', 'severity', 'extractionReliability', 'retrievalRequired', 'suggestionDraft', 'reasonDraft', 'retrievalClaims'],
-    properties: {
-      draftId: { type: 'string', minLength: 1 }, pdfPage: { type: 'integer', minimum: 1 }, blockId: { type: 'string', minLength: 1 },
-      originalText: { type: 'string', minLength: 1 }, issueType: { type: 'string', enum: ISSUE_TYPES }, ruleType: { type: 'string', enum: RULE_TYPES },
-      severity: { type: 'string', enum: SEVERITIES }, extractionReliability: { type: 'string', enum: EXTRACTION_RELIABILITIES },
-      retrievalRequired: { type: 'string', enum: RETRIEVAL_REQUIREMENTS }, temporalContext: { type: 'string', enum: TEMPORAL_CONTEXTS },
-      disputeStatus: { type: 'string', enum: DISPUTE_STATUSES }, jurisdictionScope: { type: 'string', minLength: 1 },
-      suggestionDraft: { type: 'string', minLength: 1 }, reasonDraft: { type: 'string', minLength: 1 },
-      retrievalClaims: { type: 'array', maxItems: MAX_CLAIMS_PER_FINDING, items: retrievalClaimSchema },
-      humanReviewNote: { type: 'string', minLength: 1 },
-    },
-  } } },
-}
-
-export const FINALIZATION_SCHEMA = {
-  type: 'object', additionalProperties: false, required: ['candidates'],
-  properties: { candidates: { type: 'array', maxItems: MAX_CANDIDATES, items: {
-    type: 'object', additionalProperties: false,
-    required: ['draftId', 'issueType', 'ruleType', 'severity', 'verificationStatus', 'retrievalRequired', 'judgement', 'suggestion', 'reason', 'confidence', 'evidenceClaimIds'],
-    properties: {
-      draftId: { type: 'string', minLength: 1 }, issueType: { type: 'string', enum: ISSUE_TYPES }, ruleType: { type: 'string', enum: RULE_TYPES },
-      severity: { type: 'string', enum: SEVERITIES }, verificationStatus: { type: 'string', enum: VERIFICATION_STATUSES },
-      retrievalRequired: { type: 'string', enum: RETRIEVAL_REQUIREMENTS }, judgement: { type: 'string', enum: JUDGEMENTS },
-      suggestion: { type: 'string', minLength: 1 }, reason: { type: 'string', minLength: 1 }, confidence: { type: 'string', enum: CONFIDENCES },
-      temporalContext: { type: 'string', enum: TEMPORAL_CONTEXTS }, disputeStatus: { type: 'string', enum: DISPUTE_STATUSES },
-      jurisdictionScope: { type: 'string', minLength: 1 }, humanReviewNote: { type: 'string', minLength: 1 }, correctedText: { type: 'string', minLength: 1 },
-      evidenceClaimIds: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 } },
-    },
-  } } },
+export function finalizationInstructions(policy) {
+  return `${policy}\n\nRuntime rules: emit only supported candidates; only supplied normalized evidence may support verification; refer to evidence by evidenceClaimIds only; omit uncertain findings; human review remains authoritative. Every transport field is required. Use jurisdictionScope, humanReviewNote, and correctedText as empty strings; use temporalContext=unspecified, disputeStatus=none, and evidenceClaimIds=[] when appropriate.`
 }
 
 class RuntimeFailure extends Error {
@@ -77,12 +43,100 @@ function enumValue(value, values) { return typeof value === 'string' && values.i
 function textValue(value) { return typeof value === 'string' && value.trim().length > 0 }
 function normalizedText(value) { return value.normalize('NFKC').replace(/\s+/gu, ' ').trim() }
 function hasOnlyKeys(value, allowed) { return Object.keys(value).every((key) => allowed.includes(key)) }
+function assertTransportObject(value, schema) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new RuntimeFailure('deepseek_output_invalid')
+  const properties = Object.keys(schema.properties)
+  if (!hasOnlyKeys(value, properties) || properties.some((key) => !Object.hasOwn(value, key))) {
+    throw new RuntimeFailure('deepseek_output_invalid')
+  }
+}
+function normalizedOptionalString(target, source, key) {
+  const value = source[key]
+  if (typeof value !== 'string') {
+    target[key] = value
+    return
+  }
+  const trimmed = value.trim()
+  if (trimmed) target[key] = trimmed
+}
 function claimIdFor(draftId, index) {
   return `claim_${createHash('sha256').update(`${draftId}\n${index}`).digest('hex').slice(0, 16)}`
 }
 function optional(target, source, key) { if (source[key] !== undefined) target[key] = source[key] }
 
-function assertScreeningShape(value) {
+export function normalizeScreeningTransport(value) {
+  assertTransportObject(value, SCREENING_TRANSPORT_SCHEMA)
+  if (!Array.isArray(value.findings)) throw new RuntimeFailure('deepseek_output_invalid')
+  const findingSchema = SCREENING_TRANSPORT_SCHEMA.properties.findings.items
+  const claimSchema = findingSchema.properties.retrievalClaims.items
+  return {
+    findings: value.findings.map((finding) => {
+      assertTransportObject(finding, findingSchema)
+      if (!Array.isArray(finding.retrievalClaims)) throw new RuntimeFailure('deepseek_output_invalid')
+      const normalized = {
+        draftId: finding.draftId,
+        pdfPage: finding.pdfPage,
+        originalText: finding.originalText,
+        issueType: finding.issueType,
+        ruleType: finding.ruleType,
+        severity: finding.severity,
+        extractionReliability: finding.extractionReliability,
+        retrievalRequired: finding.retrievalRequired,
+        temporalContext: finding.temporalContext,
+        disputeStatus: finding.disputeStatus,
+        suggestionDraft: finding.suggestionDraft,
+        reasonDraft: finding.reasonDraft,
+        retrievalClaims: finding.retrievalClaims.map((claim) => {
+          assertTransportObject(claim, claimSchema)
+          const normalizedClaim = {
+            kind: claim.kind,
+            text: typeof claim.text === 'string' ? claim.text.trim() : claim.text,
+          }
+          for (const key of ['knownSourceTitle', 'knownArticleNumber', 'jurisdiction', 'referenceDate']) {
+            normalizedOptionalString(normalizedClaim, claim, key)
+          }
+          return normalizedClaim
+        }),
+      }
+      for (const key of ['blockId', 'jurisdictionScope', 'humanReviewNote']) {
+        normalizedOptionalString(normalized, finding, key)
+      }
+      return normalized
+    }),
+  }
+}
+
+export function normalizeFinalizationTransport(value) {
+  assertTransportObject(value, FINALIZATION_TRANSPORT_SCHEMA)
+  if (!Array.isArray(value.candidates)) throw new RuntimeFailure('deepseek_output_invalid')
+  const candidateSchema = FINALIZATION_TRANSPORT_SCHEMA.properties.candidates.items
+  return {
+    candidates: value.candidates.map((candidate) => {
+      assertTransportObject(candidate, candidateSchema)
+      const normalized = {
+        draftId: candidate.draftId,
+        issueType: candidate.issueType,
+        ruleType: candidate.ruleType,
+        severity: candidate.severity,
+        verificationStatus: candidate.verificationStatus,
+        retrievalRequired: candidate.retrievalRequired,
+        judgement: candidate.judgement,
+        suggestion: candidate.suggestion,
+        reason: candidate.reason,
+        confidence: candidate.confidence,
+        temporalContext: candidate.temporalContext,
+        disputeStatus: candidate.disputeStatus,
+        evidenceClaimIds: candidate.evidenceClaimIds,
+      }
+      for (const key of ['jurisdictionScope', 'humanReviewNote', 'correctedText']) {
+        normalizedOptionalString(normalized, candidate, key)
+      }
+      return normalized
+    }),
+  }
+}
+
+export function assertScreeningShape(value) {
   if (!value || typeof value !== 'object' || !Array.isArray(value.findings) || value.findings.length > MAX_FINDINGS) {
     throw new RuntimeFailure('deepseek_output_invalid')
   }
@@ -112,7 +166,7 @@ function assertScreeningShape(value) {
   return value.findings
 }
 
-function locationGate(bundle, findings) {
+export function locationGate(bundle, findings) {
   const pages = new Map(bundle.pages.map((page) => [page.pdfPage, page]))
   for (const finding of findings) {
     const page = pages.get(finding.pdfPage)
@@ -160,7 +214,7 @@ async function mapConcurrent(values, concurrency, operation) {
   return results
 }
 
-function assertFinalShape(value, findings) {
+export function assertFinalShape(value, findings) {
   if (!value || typeof value !== 'object' || !Array.isArray(value.candidates) || value.candidates.length > MAX_CANDIDATES) {
     throw new RuntimeFailure('deepseek_output_invalid')
   }
@@ -290,11 +344,11 @@ export class AiReviewRuntimeService {
       if (bundle.characterCount > this.maxChapterChars) throw new RuntimeFailure('chapter_text_too_large')
 
       const screening = await this.modelClient.requestStructured({
-        instructions: `${skill.policy}\n\nRuntime rules: screen conservatively; candidate drafts are not final errata; human review is authoritative; do not claim retrieval was performed; protect historical and disputed statements.`,
-        input: JSON.stringify({ chapter: bundle }), schema: SCREENING_SCHEMA, schemaName: 'legal_textbook_screening', reasoningEffort: 'low', maxOutputTokens: STAGE1_MAX_OUTPUT_TOKENS,
+        instructions: screeningInstructions(skill.policy),
+        input: JSON.stringify({ chapter: bundle }), schema: SCREENING_TRANSPORT_SCHEMA, schemaName: 'legal_textbook_screening', reasoningEffort: 'low', maxOutputTokens: STAGE1_MAX_OUTPUT_TOKENS,
       })
       screeningUsage = screening.usage
-      const findings = assertScreeningShape(screening.data)
+      const findings = assertScreeningShape(normalizeScreeningTransport(screening.data))
       findingCount = findings.length
       locationGate(bundle, findings)
       const claims = serverClaims(documentId, chapterId, findings)
@@ -303,11 +357,11 @@ export class AiReviewRuntimeService {
       evidenceFoundCount = retrievalResults.filter((result) => result.status === 'evidence_found').length
 
       const finalization = await this.modelClient.requestStructured({
-        instructions: `${skill.policy}\n\nRuntime rules: emit only supported candidates; only supplied normalized evidence may support verification; refer to evidence by evidenceClaimIds only; omit uncertain findings; human review remains authoritative.`,
-        input: JSON.stringify({ chapter: bundle, findings, retrievalResults }), schema: FINALIZATION_SCHEMA, schemaName: 'legal_textbook_finalization', reasoningEffort: 'high', maxOutputTokens: STAGE2_MAX_OUTPUT_TOKENS,
+        instructions: finalizationInstructions(skill.policy),
+        input: JSON.stringify({ chapter: bundle, findings, retrievalResults }), schema: FINALIZATION_TRANSPORT_SCHEMA, schemaName: 'legal_textbook_finalization', reasoningEffort: 'high', maxOutputTokens: STAGE2_MAX_OUTPUT_TOKENS,
       })
       finalizationUsage = finalization.usage
-      const finalDrafts = assertFinalShape(finalization.data, findings)
+      const finalDrafts = assertFinalShape(normalizeFinalizationTransport(finalization.data), findings)
       const candidates = constructCandidates(documentId, chapterId, findings, finalDrafts, retrievalResults)
       const current = await this.aiReviewService.get(documentId, chapterId)
       await this.aiReviewService.completeAiRun(documentId, chapterId, candidates, current.revision, {
@@ -318,12 +372,17 @@ export class AiReviewRuntimeService {
     } catch (error) {
       const code = safeFailureCode(error)
       const status = this.status()
-      this.logger.error?.({ provider: status.provider, model: status.model, httpStatus: error?.status, errorCode: code, durationMs: error?.durationMs, usage: error?.usage })
+      const providerDiagnostic = {
+        ...(error?.upstreamErrorCategory ? { upstreamErrorCategory: error.upstreamErrorCategory } : {}),
+        ...(error?.upstreamErrorCode ? { upstreamErrorCode: error.upstreamErrorCode } : {}),
+      }
+      this.logger.error?.({ provider: status.provider, model: status.model, httpStatus: error?.status, errorCode: code, ...providerDiagnostic, durationMs: error?.durationMs, usage: error?.usage })
       try {
         const current = await this.aiReviewService.get(documentId, chapterId)
         if (current.stage === 'ai_running') {
           await this.aiReviewService.failAiRun(documentId, chapterId, code, current.revision, {
             provider: 'deepseek', model: status.model,
+            ...providerDiagnostic,
             ...(skill ? { skillVersion: skill.skillVersion, skillHash: skill.skillHash } : {}),
             ...(coverage ? { coverage } : {}),
             ...(screeningUsage || finalizationUsage ? { usage: { screening: screeningUsage, finalization: finalizationUsage, total: addUsage(screeningUsage, finalizationUsage) } } : {}),

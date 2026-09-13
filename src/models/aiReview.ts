@@ -122,6 +122,8 @@ export interface AiReviewWorkspace {
     completedAt?: string
     failedAt?: string
     errorCode?: string
+    upstreamErrorCategory?: 'invalid_json_schema' | 'invalid_parameter' | 'context_too_long' | 'authentication' | 'rate_limit' | 'unknown_bad_request'
+    upstreamErrorCode?: string
     provider?: 'deepseek'
     model?: string
     skillVersion?: string
