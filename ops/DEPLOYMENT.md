@@ -66,6 +66,32 @@ sudo chown root:www-data /etc/nginx/.htpasswd-proofread
 sudo chmod 640 /etc/nginx/.htpasswd-proofread
 ```
 
+## Yuandian retrieval
+
+Store the production Yuandian credential outside Git at
+`/etc/textbook-proofreading/yuandian.env` using this format:
+
+```text
+YUANDIAN_API_KEY=<secret>
+```
+
+The API service loads it through
+`EnvironmentFile=-/etc/textbook-proofreading/yuandian.env`. The leading `-`
+keeps the core proofreading API available when the file is absent: missing
+Yuandian configuration is reported by retrieval as `provider_unavailable`
+instead of preventing the service from starting.
+
+After installing the unit and restarting the API, run the production smoke as
+the `ubuntu` user. On Node versions that support `--env-file`, use:
+
+```bash
+node --env-file=/etc/textbook-proofreading/yuandian.env scripts/smoke-yuandian-production.mjs
+```
+
+The smoke performs one direct article retrieval and prints only sanitized
+status fields. It never prints the secret, evidence body, or provider record
+ID value. Do not copy the environment file or its contents into the repository.
+
 The Nginx example intentionally contains no credential or hash. Before
 installing it, save the current site file with a timestamp, install the
 example, run `sudo nginx -t`, and reload Nginx only after that test passes.
