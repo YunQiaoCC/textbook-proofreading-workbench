@@ -22,7 +22,7 @@ const step = computed(() => stage.value === 'completed' ? 3 : ['awaiting_human_r
       <div v-else-if="stage==='awaiting_human_review'" class="stage-action"><p><strong>AI 初校已完成</strong><span>开始后，请在核查 AI 建议的同时完整检查本章并补充遗漏。</span></p><button type="button" :disabled="acting||!assigneeName" @click="emit('start')">开始人工复审</button></div>
       <div v-else-if="stage==='human_review_in_progress'" class="progress-content"><div class="stats"><span>AI 建议 <b>{{ counts.total }}</b></span><span>待复审 <b>{{ counts.pending }}</b></span><span>已接受 <b>{{ counts.accepted }}</b></span><span>已修改 <b>{{ counts.modified }}</b></span><span>已驳回 <b>{{ counts.rejected }}</b></span><span>人工补充 <b>{{ manualCount }}</b></span></div><div class="complete-row"><span>{{ counts.pending ? `还有 ${counts.pending} 条 AI 建议待复审` : '所有 AI 建议已处理，请确认已完整检查本章。' }}</span><button type="button" :disabled="acting||counts.pending>0||!assigneeName" @click="emit('complete')">完成本章复审</button></div></div>
       <div v-else class="completed-note">✓ 本章复审已完成</div>
-      <div v-if="!assigneeName && stage!=='completed'" class="assignee-warning">请先在章节设置中指定人工复审负责人</div>
+      <div v-if="!assigneeName && stage!=='completed'" class="assignee-warning">请先指定本章人工复审负责人</div>
       <div v-if="error" class="workflow-error"><span>{{ error }}</span><button v-if="conflict" type="button" @click="emit('reload')">重新加载</button></div>
     </template>
   </section>

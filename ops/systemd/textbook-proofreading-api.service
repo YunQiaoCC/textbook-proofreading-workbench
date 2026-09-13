@@ -9,7 +9,9 @@ Group=ubuntu
 WorkingDirectory=/home/ubuntu/textbook-proofreading-workbench
 ExecStart=/usr/bin/node /home/ubuntu/textbook-proofreading-workbench/server/app.mjs
 EnvironmentFile=-/etc/textbook-proofreading/yuandian.env
+EnvironmentFile=/etc/textbook-proofreading/auth.env
 Environment=NODE_ENV=production
+Environment=WORKBENCH_AUTH_REQUIRED=1
 Environment=DOCUMENT_API_HOST=127.0.0.1
 Environment=DOCUMENT_API_PORT=8787
 Environment=DOCUMENT_STORAGE_ROOT=/home/ubuntu/textbook-proofreading-workbench/storage

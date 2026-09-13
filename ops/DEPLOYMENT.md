@@ -1,40 +1,79 @@
 # Production deployment
 
 This deployment keeps the existing file-backed persistence and runs exactly
-one Node API process. The supported topology is:
+one Node API process. The supported topology after the authentication cutover
+is:
 
 ```text
-HTTPS + shared Basic Auth
-        |
-      Nginx
-   /          \\
-Vue dist       /api reverse proxy
-                  |
-          Node API on 127.0.0.1:8787
-                  |
-        private file-backed storage
+HTTPS
+  |
+Nginx
+  |-- Vue static bundle and /login
+  `-- /api reverse proxy
+          |
+    Node application authentication
+    opaque HttpOnly session cookie
+          |
+    private file-backed storage
 ```
 
-The actual Nginx, systemd, htpasswd, storage, and backup paths are host
-configuration. Only the templates and scripts in this directory belong in
-Git. Never commit `/etc/nginx/.htpasswd-proofread`, a password, a password
-hash, production storage, backups, PDFs, or environment secrets.
+Unauthenticated visitors may download `index.html`, JavaScript, CSS, and the
+login view. Nginx never serves textbook storage. Every product `/api/*` route,
+including PDF GET and HEAD, requires a valid Node-side session. Only
+`POST /api/auth/login`, `GET /api/auth/session`, and `POST /api/auth/logout`
+are public API routes.
+
+The actual Nginx, systemd, secret, storage, and backup paths are host
+configuration. Only templates and scripts belong in Git. Never commit a
+password, password hash, session ID, production storage, backups, PDFs, or
+environment secrets.
 
 ## Shared access model
 
-The shared Basic Auth username is `proofreader`. It only gates entry to the
-internal workbench. It does not identify a person, enforce `assigneeName`, or
-populate issue reviewer fields. There is no personal account or RBAC system in
-this deployment.
+There is exactly one shared workbench account: username `proofreader` plus one
+shared password. Seven people can log in concurrently. Each browser receives
+an independent random server-side session, and logging out one browser does
+not invalidate the others.
+
+This account answers only whether a request may enter the workbench. There are
+no personal users, display names, registration, RBAC, JWTs, or user database.
+The chapter workflow identity remains `Chapter.assigneeName`; human-created
+issue reviewers and AI-resolution reviewers must continue to use the selected
+chapter assignee, never the shared login username.
+
+Sessions are held only in the memory of the single Node process for seven days.
+Restarting the API invalidates all sessions and requires everyone to log in
+again. Document, chapter, annotation, issue, and review persistence is
+unaffected.
 
 Concurrency remains scoped by `documentId + chapterId + revision`:
 
 - different chapters have independent workspace files, locks, and revisions;
 - stale writes to the same chapter still return HTTP 409;
-- seven people using the same Basic Auth account do not become one revision
-  key and do not create cross-chapter conflicts;
+- shared authentication does not become a revision or reviewer identity;
 - the file-backed lock assumes one Node process, so do not run a second API
   worker or cluster.
+
+## Authentication secret
+
+Production loads the shared credential from
+`/etc/textbook-proofreading/auth.env`:
+
+```text
+WORKBENCH_ACCESS_USERNAME=proofreader
+WORKBENCH_ACCESS_PASSWORD=<secret>
+```
+
+Create that file only during the production cutover, outside the repository,
+owned by root and readable only as required by systemd. The API unit sets
+`WORKBENCH_AUTH_REQUIRED=1` and deliberately uses the required form
+`EnvironmentFile=/etc/textbook-proofreading/auth.env`. If the file, username,
+or password is missing, the service must fail closed instead of starting an
+unauthenticated API.
+
+The session cookie is named `proofread_session` and contains only a 32-byte
+random opaque ID. It is `HttpOnly`, `Secure`, `SameSite=Lax`, scoped to `/`,
+and has a `Max-Age` aligned with the seven-day server TTL.
 
 ## First-time installation
 
@@ -45,8 +84,8 @@ npm ci
 npm run build
 ```
 
-Install the service templates as root, then start the API and daily backup
-timer:
+After the authentication secret has been created during cutover, install the
+service templates as root, then start the API and daily backup timer:
 
 ```bash
 sudo install -o root -g root -m 644 ops/systemd/textbook-proofreading-api.service /etc/systemd/system/textbook-proofreading-api.service
@@ -55,15 +94,6 @@ sudo install -o root -g root -m 644 ops/systemd/textbook-proofreading-backup.tim
 sudo systemctl daemon-reload
 sudo systemctl enable --now textbook-proofreading-api
 sudo systemctl enable --now textbook-proofreading-backup.timer
-```
-
-Create the shared credential interactively in the SSH terminal. Do not send
-the password to an automation agent and do not put it in shell history:
-
-```bash
-sudo htpasswd -c /etc/nginx/.htpasswd-proofread proofreader
-sudo chown root:www-data /etc/nginx/.htpasswd-proofread
-sudo chmod 640 /etc/nginx/.htpasswd-proofread
 ```
 
 ## Yuandian retrieval
@@ -77,9 +107,9 @@ YUANDIAN_API_KEY=<secret>
 
 The API service loads it through
 `EnvironmentFile=-/etc/textbook-proofreading/yuandian.env`. The leading `-`
-keeps the core proofreading API available when the file is absent: missing
-Yuandian configuration is reported by retrieval as `provider_unavailable`
-instead of preventing the service from starting.
+remains intentional for this optional integration: missing Yuandian
+configuration is reported as `provider_unavailable` instead of preventing the
+core API from starting.
 
 After installing the unit and restarting the API, run the production smoke as
 the `ubuntu` user. On Node versions that support `--env-file`, use:
@@ -92,20 +122,22 @@ The smoke performs one direct article retrieval and prints only sanitized
 status fields. It never prints the secret, evidence body, or provider record
 ID value. Do not copy the environment file or its contents into the repository.
 
-The Nginx example intentionally contains no credential or hash. Before
-installing it, save the current site file with a timestamp, install the
-example, run `sudo nginx -t`, and reload Nginx only after that test passes.
+## Nginx boundary
 
-The `/.well-known/acme-challenge/` location is unauthenticated because the
-current Certbot setup uses the Nginx authenticator. All other HTTP traffic is
-redirected to HTTPS, and the HTTPS server block protects both static content
-and `/api/` with the shared credential.
+The Nginx template terminates HTTPS, serves the Vue SPA, and proxies `/api/`.
+It contains no Basic Auth directives and sends no `X-Authenticated-User`.
+It explicitly clears `Authorization`; Node trusts only `proofread_session`.
+The ACME challenge, SPA fallback, and PDF.js `.mjs` handling remain intact.
+
+Before installing a changed Nginx template, save the current site file with a
+timestamp, install the example, run `sudo nginx -t`, and reload only after that
+test passes.
 
 ## Storage and backups
 
-`storage/` is owned by `ubuntu:ubuntu`; directories use mode 700 and files
-use mode 600. Nginx never reads storage directly. The Node API reads it after
-the request has passed through Nginx authentication.
+`storage/` is owned by `ubuntu:ubuntu`; directories use mode 700 and files use
+mode 600. Nginx never reads storage directly. The authenticated Node API is the
+only HTTP path to textbook data.
 
 `ops/backup-workbench.sh` archives only `storage/documents/` and
 `storage/metadata/`. It excludes `storage/temp/`, writes a timestamped archive,
@@ -123,28 +155,21 @@ chapter. Immutable document assets and atomic metadata writes make that level
 of consistency acceptable for the current chapter-scoped seven-person
 workflow.
 
-## Validation
+## Production cutover and validation
 
-The API must show only `127.0.0.1:8787` in `ss -lntp`; port 5173 must not be
-listening. Validate the public path through the real HTTPS domain, not only
-the loopback API:
+Do not partially adapt `ops/validate-production.sh` while production still
+uses Nginx Basic Auth. In the dedicated cutover round:
 
-- no credential: `/` and `/api/documents` return 401;
-- with the shared credential: `/` and `/api/documents` return 200;
-- PDF GET/HEAD return 200 and expose `Accept-Ranges`, `ETag`, and
-  `Last-Modified`;
-- `Range: bytes=0-99` returns 206 with `Content-Range`;
-- matching `If-None-Match` takes precedence and returns 304;
-- matching strong ETag or fresh HTTP-date `If-Range` permits 206;
-- stale or unrecognised `If-Range` safely falls back to a complete 200;
-- restarting `textbook-proofreading-api` preserves documents, chapters,
-  annotations, issues, and per-chapter revisions.
+1. create `/etc/textbook-proofreading/auth.env`;
+2. install the new build and systemd unit;
+3. while the old Basic Auth gate still protects the site, verify Node login,
+   session, logout, protected API, and PDF behavior;
+4. install the Nginx template that removes Basic Auth;
+5. run `nginx -t`;
+6. reload Nginx;
+7. run public login/logout plus unauthenticated 401 and authenticated 200
+   smoke checks.
 
-For a complete synthetic end-to-end check, run
-`ops/validate-production.sh` from an interactive SSH terminal. It reads the
-shared credential without echoing it, creates its own two-page fixture, and
-removes all temporary files on exit. It does not use or upload an unpublished
-textbook.
-
-Use only synthetic, public, or open-access PDFs for deployment smoke tests.
-Do not upload an unpublished textbook during validation.
+Update `ops/validate-production.sh` to the session model as part of that same
+cutover. Use only synthetic, public, or open-access PDFs for deployment smoke
+tests; never upload an unpublished textbook during validation.

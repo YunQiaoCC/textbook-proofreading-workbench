@@ -20,6 +20,7 @@
     "test:legal-skill": "node scripts/validate-legal-proofreading-skill.mjs",
     "test:ai-review-workflow": "node scripts/test-ai-review-workflow.mjs",
     "test:yuandian-retrieval": "node scripts/test-yuandian-retrieval.mjs",
+    "test:auth": "node scripts/test-auth.mjs",
     "smoke:yuandian-production": "node scripts/smoke-yuandian-production.mjs"
   },
   "dependencies": {

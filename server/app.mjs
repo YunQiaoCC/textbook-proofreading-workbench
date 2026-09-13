@@ -18,6 +18,7 @@ import { DocumentDeletionService } from './services/documentDeletionService.mjs'
 import { NativePdfTextExtractor } from './services/nativePdfTextExtractor.mjs'
 import { DocumentTextService } from './services/documentTextService.mjs'
 import { PdfPageVisualTriage } from './services/pdfPageVisualTriage.mjs'
+import { AuthSessionService, clearedSessionCookie } from './services/authSessionService.mjs'
 
 const MAX_JSON_BODY = 64 * 1024
 
@@ -101,8 +102,49 @@ function errorResponse(error) {
   }
 }
 
-async function handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService, aiReviewService, documentDeletionService, documentTextService) {
+async function handleRequest(request, response, services) {
+  const {
+    authSessionService,
+    uploadService,
+    documentReadService,
+    chapterService,
+    proofreadingService,
+    aiReviewService,
+    documentDeletionService,
+    documentTextService,
+  } = services
   const segments = routeSegments(request.url ?? '/')
+
+  if (segments.length === 3 && segments[0] === 'api' && segments[1] === 'auth') {
+    if (segments[2] === 'login') {
+      if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+      const body = await readJsonBody(request)
+      const result = authSessionService.authenticate(body?.username, body?.password)
+      if (!result) throw new HttpError(401, 'invalid_credentials', 'invalid credentials')
+      sendJson(response, 200, {
+        authenticated: result.authenticated,
+        account: result.account,
+      }, result.cookie ? { 'set-cookie': result.cookie } : {})
+      return
+    }
+    if (segments[2] === 'session') {
+      if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+      sendJson(response, 200, authSessionService.session(request))
+      return
+    }
+    if (segments[2] === 'logout') {
+      if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+      authSessionService.logout(request)
+      response.statusCode = 204
+      response.setHeader('set-cookie', clearedSessionCookie())
+      response.end()
+      return
+    }
+  }
+
+  if (segments[0] === 'api' && !authSessionService.session(request).authenticated) {
+    throw new HttpError(401, 'authentication_required', 'authentication required')
+  }
 
   if (segments.length === 2 && segments[0] === 'api' && segments[1] === 'documents') {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
@@ -368,6 +410,13 @@ async function handleRequest(request, response, uploadService, documentReadServi
 
 export async function createIngestionServer(options = {}) {
   const config = createServerConfig(options)
+  const authSessionService = new AuthSessionService({
+    required: config.authRequired,
+    username: config.accessUsername,
+    password: config.accessPassword,
+    ttlMs: config.sessionTtlMs,
+    now: options.sessionNow,
+  })
   const lifecycleCoordinator = new DocumentLifecycleCoordinator()
   const documentStorage = new LocalDocumentStorage(config.storageRoot)
   const documentRepository = new FileBackedDocumentRepository(config.storageRoot, { lifecycleCoordinator })
@@ -428,8 +477,18 @@ export async function createIngestionServer(options = {}) {
   })
   await uploadService.init()
 
+  const services = {
+    authSessionService,
+    uploadService,
+    documentReadService,
+    chapterService,
+    proofreadingService,
+    aiReviewService,
+    documentDeletionService,
+    documentTextService,
+  }
   const server = createHttpServer((request, response) => {
-    void handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService, aiReviewService, documentDeletionService, documentTextService).catch((error) => {
+    void handleRequest(request, response, services).catch((error) => {
       if (!response.headersSent) {
         const result = errorResponse(error)
         sendJson(response, result.statusCode, result.body, result.headers)
@@ -448,6 +507,7 @@ export async function createIngestionServer(options = {}) {
   return {
     server,
     config,
+    authSessionService,
     documentStorage,
     documentRepository,
     documentReadService,

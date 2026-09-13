@@ -4,6 +4,7 @@ export const projectRoot = path.resolve(import.meta.dirname, '..')
 export const DEFAULT_MAX_DOCUMENT_SIZE = 1024 * 1024 * 1024
 export const DEFAULT_CHUNK_SIZE = 16 * 1024 * 1024
 export const DEFAULT_INSPECTION_TIMEOUT_MS = 5 * 60 * 1000
+export const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 function positiveInteger(value, fallback) {
   const parsed = Number(value)
@@ -19,6 +20,17 @@ export function createServerConfig(overrides = {}) {
     DEFAULT_INSPECTION_TIMEOUT_MS,
   )
 
+  const authRequired = overrides.authRequired ?? process.env.WORKBENCH_AUTH_REQUIRED === '1'
+  const accessUsername = overrides.accessUsername ?? process.env.WORKBENCH_ACCESS_USERNAME
+  const accessPassword = overrides.accessPassword ?? process.env.WORKBENCH_ACCESS_PASSWORD
+
+  if (authRequired && (typeof accessUsername !== 'string' || accessUsername.trim().length === 0)) {
+    throw new Error('WORKBENCH_ACCESS_USERNAME is required when workbench authentication is enabled')
+  }
+  if (authRequired && (typeof accessPassword !== 'string' || accessPassword.trim().length === 0)) {
+    throw new Error('WORKBENCH_ACCESS_PASSWORD is required when workbench authentication is enabled')
+  }
+
   return {
     host: overrides.host ?? process.env.DOCUMENT_API_HOST ?? '127.0.0.1',
     port: overrides.port ?? envPort,
@@ -28,5 +40,9 @@ export function createServerConfig(overrides = {}) {
     maxDocumentSize: overrides.maxDocumentSize ?? envMaxSize,
     chunkSize: overrides.chunkSize ?? envChunkSize,
     inspectionTimeoutMs: overrides.inspectionTimeoutMs ?? envTimeout,
+    authRequired,
+    accessUsername,
+    accessPassword,
+    sessionTtlMs: overrides.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS,
   }
 }

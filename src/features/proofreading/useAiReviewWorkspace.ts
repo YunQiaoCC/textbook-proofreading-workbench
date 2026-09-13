@@ -40,7 +40,7 @@ export function useAiReviewWorkspace(
   function responsibleReviewer() {
     const name = toValue(reviewerName)?.trim()
     if (!name) {
-      error.value = '请先在章节设置中指定人工复审负责人。'
+      error.value = '请先指定本章人工复审负责人'
       return null
     }
     return name
