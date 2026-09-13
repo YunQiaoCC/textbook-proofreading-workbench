@@ -9,12 +9,15 @@ import {
   AI_REVIEW_QUEUE_CONCURRENCY,
   assertFinalShape,
   assertScreeningShape,
+  hydrateFindingLocation,
+  locationGate,
   MAX_CANDIDATES,
   MAX_CLAIMS_PER_FINDING,
   MAX_FINDINGS,
   MAX_RETRIEVAL_CLAIMS,
   normalizeFinalizationTransport,
   normalizeScreeningTransport,
+  screeningInstructions,
 } from '../server/ai/aiReviewRuntimeService.mjs'
 import {
   FINALIZATION_TRANSPORT_SCHEMA,
@@ -33,7 +36,7 @@ function retrievalClaim(overrides = {}) {
   return { kind: 'article_text', text: 'FOUND', knownSourceTitle: '', knownArticleNumber: '', jurisdiction: '', referenceDate: '', ...overrides }
 }
 function finding(overrides = {}) {
-  return { draftId: 'draft-1', pdfPage: 1, blockId: 'block-1', originalText: '错误表述', issueType: 'wording', ruleType: 'static', severity: 'minor', extractionReliability: 'high', retrievalRequired: 'no', temporalContext: 'unspecified', disputeStatus: 'none', jurisdictionScope: '', suggestionDraft: '正确表述', reasonDraft: '静态语言问题', retrievalClaims: [], humanReviewNote: '', ...overrides }
+  return { draftId: 'draft-1', pdfPage: 1, blockId: 'block-1', issueType: 'wording', ruleType: 'static', severity: 'minor', retrievalRequired: 'no', temporalContext: 'unspecified', disputeStatus: 'none', jurisdictionScope: '', suggestionDraft: '正确表述', reasonDraft: '静态语言问题', retrievalClaims: [], humanReviewNote: '', ...overrides }
 }
 function finalDraft(overrides = {}) {
   return { draftId: 'draft-1', issueType: 'wording', ruleType: 'static', severity: 'minor', verificationStatus: 'not_required', retrievalRequired: 'no', judgement: 'confirmed_error', suggestion: '正确表述', reason: '静态语言问题', confidence: 'high', temporalContext: 'unspecified', disputeStatus: 'none', jurisdictionScope: '', humanReviewNote: '', correctedText: '', evidenceClaimIds: [], ...overrides }
@@ -108,6 +111,12 @@ async function fixture(app, documentId, pages = [{ classification: 'native_ready
 
 await test('stage1-transport-schema-compatible', () => assertDeepSeekTransportSchemaCompatible(SCREENING_TRANSPORT_SCHEMA))
 await test('stage2-transport-schema-compatible', () => assertDeepSeekTransportSchemaCompatible(FINALIZATION_TRANSPORT_SCHEMA))
+await test('stage1-schema-excludes-original-text', () => assert.equal('originalText' in SCREENING_TRANSPORT_SCHEMA.properties.findings.items.properties, false))
+await test('stage1-schema-excludes-extraction-reliability', () => assert.equal('extractionReliability' in SCREENING_TRANSPORT_SCHEMA.properties.findings.items.properties, false))
+await test('stage2-schema-cannot-redecide-location', () => {
+  const properties = FINALIZATION_TRANSPORT_SCHEMA.properties.candidates.items.properties
+  for (const key of ['pdfPage', 'blockId', 'originalText', 'extractionReliability']) assert.equal(key in properties, false)
+})
 await test('nested-retrieval-claim-all-required', () => {
   const claimSchema = SCREENING_TRANSPORT_SCHEMA.properties.findings.items.properties.retrievalClaims.items
   assert.deepEqual(new Set(claimSchema.required), new Set(Object.keys(claimSchema.properties)))
@@ -116,9 +125,15 @@ await test('forbidden-transport-schema-keywords-absent', () => {
   assertDeepSeekTransportSchemaCompatible(SCREENING_TRANSPORT_SCHEMA)
   assertDeepSeekTransportSchemaCompatible(FINALIZATION_TRANSPORT_SCHEMA)
 })
-await test('blank-screening-sentinels-omitted', () => {
-  const normalized = normalizeScreeningTransport({ findings: [finding({ blockId: '', jurisdictionScope: '', humanReviewNote: '' })] }).findings[0]
-  assert.equal('blockId' in normalized, false)
+await test('blank-block-id-rejected', () => {
+  const normalized = normalizeScreeningTransport({ findings: [finding({ blockId: '', jurisdictionScope: '', humanReviewNote: '' })] })
+  assert.throws(() => assertScreeningShape(normalized), (error) => error.code === 'deepseek_output_invalid')
+  const normalizedFinding = normalized.findings[0]
+  assert.equal('blockId' in normalizedFinding, true)
+  assert.equal(normalizedFinding.blockId, '')
+})
+await test('blank-screening-optional-sentinels-omitted', () => {
+  const normalized = normalizeScreeningTransport({ findings: [finding({ jurisdictionScope: '', humanReviewNote: '' })] }).findings[0]
   assert.equal('jurisdictionScope' in normalized, false)
   assert.equal('humanReviewNote' in normalized, false)
 })
@@ -169,8 +184,41 @@ await test('duplicate-evidence-claim-ids-rejected-server-side', () => {
   assert.throws(() => assertFinalShape(normalized, [finding()]), (error) => error.code === 'deepseek_output_invalid')
 })
 await test('empty-semantic-text-rejected-after-normalization', () => {
-  const normalized = normalizeScreeningTransport({ findings: [finding({ originalText: '   ' })] })
+  const normalized = normalizeScreeningTransport({ findings: [finding({ suggestionDraft: '   ' })] })
   assert.throws(() => assertScreeningShape(normalized), (error) => error.code === 'deepseek_output_invalid')
+})
+await test('model-original-text-property-rejected-by-stage1-transport', () => {
+  assert.throws(() => normalizeScreeningTransport({ findings: [finding({ originalText: '模型伪造原文' })] }), (error) => error.code === 'deepseek_output_invalid')
+})
+await test('model-extraction-reliability-property-rejected-by-stage1-transport', () => {
+  assert.throws(() => normalizeScreeningTransport({ findings: [finding({ extractionReliability: 'low' })] }), (error) => error.code === 'deepseek_output_invalid')
+})
+const hydrationBundle = {
+  startPdfPage: 1,
+  endPdfPage: 2,
+  pages: [
+    { pdfPage: 1, extractionReliability: 'high', blocks: [{ blockId: 'block-1', text: '这里有  错误表述，\n需要校对。' }, { blockId: 'block-neighbor', text: '相邻上下文。' }] },
+    { pdfPage: 2, extractionReliability: 'medium', blocks: [{ blockId: 'block-2', text: '可疑提取文本。' }] },
+  ],
+}
+await test('valid-location-hydrates-exact-server-block-text', () => assert.equal(hydrateFindingLocation(hydrationBundle, finding()).originalText, hydrationBundle.pages[0].blocks[0].text))
+await test('ready-page-injects-high-reliability', () => assert.equal(hydrateFindingLocation(hydrationBundle, finding()).extractionReliability, 'high'))
+await test('suspicious-page-injects-medium-reliability', () => assert.equal(hydrateFindingLocation(hydrationBundle, finding({ pdfPage: 2, blockId: 'block-2' })).extractionReliability, 'medium'))
+await test('hydration-overwrites-any-source-text-value', () => assert.equal(hydrateFindingLocation(hydrationBundle, finding({ originalText: '模型值' })).originalText, hydrationBundle.pages[0].blocks[0].text))
+await test('hydration-overwrites-any-reliability-value', () => assert.equal(hydrateFindingLocation(hydrationBundle, finding({ extractionReliability: 'low' })).extractionReliability, 'high'))
+await test('invalid-page-fails-closed-with-safe-category', () => {
+  assert.throws(() => locationGate(hydrationBundle, [finding({ pdfPage: 3 })]), (error) => error.code === 'deepseek_output_invalid' && error.failurePhase === 'location_gate' && error.locationFailureCategory === 'page_not_found')
+})
+await test('invalid-block-fails-closed-with-safe-category', () => {
+  assert.throws(() => locationGate(hydrationBundle, [finding({ blockId: 'missing-block' })]), (error) => error.code === 'deepseek_output_invalid' && error.failurePhase === 'location_gate' && error.locationFailureCategory === 'block_not_found')
+})
+await test('block-id-is-not-fuzzy-matched', () => {
+  assert.throws(() => locationGate(hydrationBundle, [finding({ blockId: 'block-1 ' })]), (error) => error.locationFailureCategory === 'block_not_found')
+})
+await test('stage1-prompt-requires-exact-primary-block-anchor', () => {
+  const instructions = screeningInstructions('policy')
+  for (const phrase of ['exactly one existing pdfPage + blockId', 'Copy pdfPage and blockId identifiers exactly', 'server, not the model, determines source text and extraction reliability', 'single primary block']) assert.equal(instructions.includes(phrase), true)
+  assert.equal(instructions.includes('Use blockId,'), false)
 })
 await test('candidate-contract-stable-id-unchanged', () => {
   const candidate = { schemaVersion: '0.1', id: '', documentId: 'document', chapterId: 'chapter', pdfPage: 1, blockId: 'block-1', originalText: '错误表述', issueType: 'wording', ruleType: 'static', severity: 'minor', extractionReliability: 'high', verificationStatus: 'not_required', retrievalRequired: 'no', evidence: [], judgement: 'confirmed_error', suggestion: '正确表述', reason: '静态语言问题', confidence: 'high', temporalContext: 'unspecified', disputeStatus: 'none', humanResolution: 'pending' }
@@ -186,10 +234,14 @@ const app = await createIngestionServer({ storageRoot: root, authRequired: false
 const base = await listen(app)
 try {
   const chapter = await fixture(app, 'happy-document', [
-    { classification: 'native_ready', status: 'ready', text: '这里有错误表述，需要校对。', blockId: 'block-1' },
+    { classification: 'native_ready', status: 'ready', text: '这里有  错误表述，\n需要校对。', blockId: 'block-1' },
     { classification: 'native_suspicious', status: 'suspicious', text: '可疑提取文本。', blockId: 'block-2' },
     { classification: 'ocr_not_needed', status: 'ready', text: '', blockId: 'block-3' },
   ])
+  model.behaviors.set('happy-document', {
+    findings: [finding(), finding({ draftId: 'draft-2', pdfPage: 2, blockId: 'block-2' })],
+    candidates: [finalDraft(), finalDraft({ draftId: 'draft-2' })],
+  })
   const route = `/api/documents/happy-document/chapters/${chapter.id}/ai-review`
   await test('runtime-status-authenticated-shape', async () => { const result = await request(base, '/api/ai-runtime/status'); assert.deepEqual(result.body, { configured: true, provider: 'deepseek', model: 'deepseek-v4-flash' }) })
   await test('runtime-status-hides-secret-and-base-url', async () => { const result = await request(base, '/api/ai-runtime/status'); assert.equal(JSON.stringify(result.body).includes('key'), false); assert.equal('baseUrl' in result.body, false) })
@@ -207,9 +259,15 @@ try {
   await test('stage2-uses-transport-schema', () => assert.deepEqual(highCall.request.schema, FINALIZATION_TRANSPORT_SCHEMA))
   await test('queue-concurrency-one-contract', () => assert.equal(AI_REVIEW_QUEUE_CONCURRENCY, 1))
   await test('candidate-id-server-generated', () => assert.match(happy.candidates[0].candidate.id, /^ltp_[a-f0-9]{16}$/))
-  await test('human-resolution-pending', () => assert.equal(happy.candidates[0].candidate.humanResolution, 'pending'))
-  await test('candidate-validates', () => assert.deepEqual(validateCandidateIssue(happy.candidates[0].candidate), []))
+  await test('human-resolution-pending', () => assert.equal(happy.candidates.every(({ candidate }) => candidate.humanResolution === 'pending'), true))
+  await test('candidate-validates', () => assert.equal(happy.candidates.every(({ candidate }) => validateCandidateIssue(candidate).length === 0), true))
   await test('server-owned-location', () => { assert.equal(happy.candidates[0].candidate.documentId, 'happy-document'); assert.equal(happy.candidates[0].candidate.chapterId, chapter.id); assert.equal(happy.candidates[0].candidate.blockId, 'block-1') })
+  await test('candidate-original-text-is-exact-server-block', () => assert.equal(happy.candidates[0].candidate.originalText, '这里有  错误表述，\n需要校对。'))
+  await test('candidate-high-reliability-is-server-owned', () => assert.equal(happy.candidates.find(({ candidate }) => candidate.blockId === 'block-1').candidate.extractionReliability, 'high'))
+  await test('candidate-medium-reliability-is-server-owned', () => assert.equal(happy.candidates.find(({ candidate }) => candidate.blockId === 'block-2').candidate.extractionReliability, 'medium'))
+  await test('stable-id-uses-server-owned-original-text', () => assert.equal(happy.candidates[0].candidate.id, stableCandidateId(happy.candidates[0].candidate)))
+  await test('stage2-receives-server-owned-original-text', () => assert.equal(highCall.input.findings[0].originalText, '这里有  错误表述，\n需要校对。'))
+  await test('stage2-receives-server-owned-extraction-reliability', () => { assert.equal(highCall.input.findings[0].extractionReliability, 'high'); assert.equal(highCall.input.findings[1].extractionReliability, 'medium') })
   await test('partial-coverage-retained', () => assert.deepEqual(happy.aiRun.coverage, { totalPages: 3, readyPages: 1, suspiciousPages: 1, unavailablePages: 0, blankPages: 1, coveredTextPages: 2, complete: false }))
   await test('usage-metadata-stored', () => assert.equal(happy.aiRun.usage.total.total_tokens, usage(5).total_tokens + usage(9).total_tokens))
   await test('skill-hash-stored', () => assert.match(happy.aiRun.skillHash, /^[a-f0-9]{64}$/))
@@ -253,11 +311,21 @@ try {
     assert.equal(workspace.stage, 'ai_failed'); assert.equal(workspace.aiRun.errorCode, expectedCode)
     return { caseChapter, workspace }
   }
-  await test('hallucinated-original-text-rejected', () => failureCase('hallucination-document', { findings: [finding({ originalText: '不存在的原文' })] }, 'deepseek_output_invalid'))
-  await test('block-id-mismatch-rejected', () => failureCase('block-mismatch-document', { findings: [finding({ blockId: 'invented-block' })] }, 'deepseek_output_invalid'))
-  await test('page-outside-chapter-rejected', () => failureCase('page-outside-document', { findings: [finding({ pdfPage: 2 })] }, 'deepseek_output_invalid'))
+  await test('model-cannot-output-original-text', () => failureCase('model-source-document', { findings: [finding({ originalText: '不存在的原文' })] }, 'deepseek_output_invalid'))
+  await test('model-cannot-output-extraction-reliability', () => failureCase('model-reliability-document', { findings: [finding({ extractionReliability: 'low' })] }, 'deepseek_output_invalid'))
+  await test('block-id-mismatch-rejected-with-safe-diagnostics', async () => {
+    const { workspace } = await failureCase('block-mismatch-document', { findings: [finding({ blockId: 'invented-block' })] }, 'deepseek_output_invalid')
+    assert.equal(workspace.aiRun.failurePhase, 'location_gate')
+    assert.equal(workspace.aiRun.locationFailureCategory, 'block_not_found')
+  })
+  await test('page-outside-chapter-rejected-with-safe-diagnostics', async () => {
+    const { workspace } = await failureCase('page-outside-document', { findings: [finding({ pdfPage: 2 })] }, 'deepseek_output_invalid')
+    assert.equal(workspace.aiRun.failurePhase, 'location_gate')
+    assert.equal(workspace.aiRun.locationFailureCategory, 'page_not_found')
+  })
+  await test('runtime-does-not-fuzzy-match-block-id', () => failureCase('fuzzy-block-document', { findings: [finding({ blockId: 'block-1 ' })] }, 'deepseek_output_invalid'))
   await test('controlled-enum-enforced', () => failureCase('enum-document', { findings: [finding({ severity: 'catastrophic' })] }, 'deepseek_output_invalid'))
-  await test('empty-required-semantic-text-rejected-after-normalization', () => failureCase('empty-text-document', { findings: [finding({ originalText: '   ' })] }, 'deepseek_output_invalid'))
+  await test('empty-required-semantic-text-rejected-after-normalization', () => failureCase('empty-text-document', { findings: [finding({ reasonDraft: '   ' })] }, 'deepseek_output_invalid'))
   await test('more-than-100-findings-rejected-server-side', () => failureCase('too-many-findings-document', { findings: Array.from({ length: MAX_FINDINGS + 1 }, (_, index) => finding({ draftId: `finding-${index}` })) }, 'deepseek_output_invalid'))
   await test('more-than-3-claims-per-finding-rejected-server-side', () => failureCase('too-many-claims-document', { findings: [finding({ retrievalClaims: Array.from({ length: MAX_CLAIMS_PER_FINDING + 1 }, (_, index) => retrievalClaim({ text: `claim-${index}` })) })] }, 'deepseek_output_invalid'))
   await test('total-retrieval-claim-limit-rejected-server-side', () => failureCase('too-many-total-claims-document', { findings: Array.from({ length: 51 }, (_, index) => finding({ draftId: `claim-finding-${index}`, retrievalClaims: [retrievalClaim({ text: `claim-${index}-a` }), retrievalClaim({ text: `claim-${index}-b` })] })) }, 'deepseek_output_invalid'))
@@ -315,6 +383,13 @@ try {
   model.behaviors.set('manual-document', { screeningError: new DeepSeekProviderError('deepseek_timeout') }); await app.aiReviewService.startAiRun('manual-document', manualChapter.id, 0); app.aiReviewRuntimeService.enqueue('manual-document', manualChapter.id); await app.aiReviewRuntimeService.waitForIdle(); const manualAfter = await app.proofreadingService.getChapter('manual-document', manualChapter.id)
   await test('manual-proofreading-workspace-untouched', () => assert.deepEqual(manualAfter, manualBefore))
   await test('sanitized-logs-only', () => { const serialized = JSON.stringify(logs); assert.equal(serialized.includes('这里有错误表述'), false); assert.equal(serialized.includes('apiKey'), false); assert.equal(logs.every((entry) => entry.provider === 'deepseek' && entry.model === 'deepseek-v4-flash'), true) })
+  await test('location-log-contains-only-safe-diagnostics', () => {
+    const locationLogs = logs.filter((entry) => entry.failurePhase === 'location_gate')
+    assert.equal(locationLogs.length >= 3, true)
+    assert.equal(locationLogs.every((entry) => ['page_not_found', 'block_not_found'].includes(entry.locationFailureCategory)), true)
+    assert.equal(JSON.stringify(locationLogs).includes('这里有错误表述'), false)
+    assert.equal(JSON.stringify(locationLogs).includes('invented-block'), false)
+  })
   await test('systemd-deepseek-env-optional', async () => assert.equal((await readFile(path.resolve('ops/systemd/textbook-proofreading-api.service'), 'utf8')).includes('EnvironmentFile=-/etc/textbook-proofreading/deepseek.env'), true))
 } finally {
   await app.close(); await rm(root, { recursive: true, force: true })
@@ -328,6 +403,6 @@ try {
   await test('status-endpoint-requires-authentication', async () => { const result = await request(authBase, '/api/ai-runtime/status'); assert.equal(result.response.status, 401) })
 } finally { await authApp.close(); await rm(authRoot, { recursive: true, force: true }) }
 
-assert.equal(testCount >= 45, true)
+assert.equal(testCount >= 65, true)
 console.log(`ai-review-runtime-test-count=${testCount}`)
 console.log('real-deepseek-requests=0')

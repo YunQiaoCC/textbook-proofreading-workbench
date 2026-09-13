@@ -6,7 +6,6 @@ import { loadLegalSkillPrompt } from './legalSkillPrompt.mjs'
 import {
   CONFIDENCES,
   DISPUTE_STATUSES,
-  EXTRACTION_RELIABILITIES,
   FINALIZATION_TRANSPORT_SCHEMA,
   ISSUE_TYPES,
   JUDGEMENTS,
@@ -28,7 +27,7 @@ export const MAX_RETRIEVAL_CLAIMS = 100
 export const MAX_CANDIDATES = 100
 
 export function screeningInstructions(policy) {
-  return `${policy}\n\nRuntime rules: screen conservatively; candidate drafts are not final errata; human review is authoritative; do not claim retrieval was performed; protect historical and disputed statements. Every transport field is required. Use blockId, jurisdictionScope, humanReviewNote, and unavailable retrieval claim fields as empty strings; use temporalContext=unspecified and disputeStatus=none or unclear when no stronger value is supported.`
+  return `${policy}\n\nRuntime rules: screen conservatively; candidate drafts are not final errata; human review is authoritative; do not claim retrieval was performed; protect historical and disputed statements. Every transport field is required. Every finding must reference exactly one existing pdfPage + blockId from the supplied chapter bundle. Copy pdfPage and blockId identifiers exactly. Do not invent block identifiers. The server, not the model, determines source text and extraction reliability. Select the single primary block that best locates the issue. Neighboring blocks may inform judgement, but the finding anchor must be one real block. Use jurisdictionScope, humanReviewNote, and unavailable retrieval claim fields as empty strings; use temporalContext=unspecified and disputeStatus=none or unclear when no stronger value is supported.`
 }
 
 export function finalizationInstructions(policy) {
@@ -36,12 +35,18 @@ export function finalizationInstructions(policy) {
 }
 
 class RuntimeFailure extends Error {
-  constructor(code) { super(code); this.code = code }
+  constructor(code, { failurePhase, locationFailureCategory } = {}) {
+    super(locationFailureCategory ? `location_${locationFailureCategory}` : code)
+    this.code = code
+    if (failurePhase === 'location_gate') this.failurePhase = failurePhase
+    if (['page_not_found', 'block_not_found'].includes(locationFailureCategory)) {
+      this.locationFailureCategory = locationFailureCategory
+    }
+  }
 }
 
 function enumValue(value, values) { return typeof value === 'string' && values.includes(value) }
 function textValue(value) { return typeof value === 'string' && value.trim().length > 0 }
-function normalizedText(value) { return value.normalize('NFKC').replace(/\s+/gu, ' ').trim() }
 function hasOnlyKeys(value, allowed) { return Object.keys(value).every((key) => allowed.includes(key)) }
 function assertTransportObject(value, schema) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new RuntimeFailure('deepseek_output_invalid')
@@ -76,11 +81,10 @@ export function normalizeScreeningTransport(value) {
       const normalized = {
         draftId: finding.draftId,
         pdfPage: finding.pdfPage,
-        originalText: finding.originalText,
+        blockId: finding.blockId,
         issueType: finding.issueType,
         ruleType: finding.ruleType,
         severity: finding.severity,
-        extractionReliability: finding.extractionReliability,
         retrievalRequired: finding.retrievalRequired,
         temporalContext: finding.temporalContext,
         disputeStatus: finding.disputeStatus,
@@ -98,7 +102,7 @@ export function normalizeScreeningTransport(value) {
           return normalizedClaim
         }),
       }
-      for (const key of ['blockId', 'jurisdictionScope', 'humanReviewNote']) {
+      for (const key of ['jurisdictionScope', 'humanReviewNote']) {
         normalizedOptionalString(normalized, finding, key)
       }
       return normalized
@@ -141,18 +145,16 @@ export function assertScreeningShape(value) {
     throw new RuntimeFailure('deepseek_output_invalid')
   }
   const draftIds = new Set()
-  const findingKeys = ['draftId', 'pdfPage', 'blockId', 'originalText', 'issueType', 'ruleType', 'severity', 'extractionReliability', 'retrievalRequired', 'temporalContext', 'disputeStatus', 'jurisdictionScope', 'suggestionDraft', 'reasonDraft', 'retrievalClaims', 'humanReviewNote']
+  const findingKeys = ['draftId', 'pdfPage', 'blockId', 'issueType', 'ruleType', 'severity', 'retrievalRequired', 'temporalContext', 'disputeStatus', 'jurisdictionScope', 'suggestionDraft', 'reasonDraft', 'retrievalClaims', 'humanReviewNote']
   const claimKeys = ['kind', 'text', 'knownSourceTitle', 'knownArticleNumber', 'jurisdiction', 'referenceDate']
   let totalClaims = 0
   for (const finding of value.findings) {
-    if (!finding || typeof finding !== 'object' || !hasOnlyKeys(finding, findingKeys) || !textValue(finding.draftId) || draftIds.has(finding.draftId) || !Number.isSafeInteger(finding.pdfPage) || finding.pdfPage < 1 ||
-      !textValue(finding.originalText) || !enumValue(finding.issueType, ISSUE_TYPES) || !enumValue(finding.ruleType, RULE_TYPES) ||
-      !enumValue(finding.severity, SEVERITIES) || !enumValue(finding.extractionReliability, EXTRACTION_RELIABILITIES) ||
+    if (!finding || typeof finding !== 'object' || !hasOnlyKeys(finding, findingKeys) || !textValue(finding.draftId) || draftIds.has(finding.draftId) || !Number.isSafeInteger(finding.pdfPage) || finding.pdfPage < 1 || !textValue(finding.blockId) ||
+      !enumValue(finding.issueType, ISSUE_TYPES) || !enumValue(finding.ruleType, RULE_TYPES) || !enumValue(finding.severity, SEVERITIES) ||
       !enumValue(finding.retrievalRequired, RETRIEVAL_REQUIREMENTS) || !textValue(finding.suggestionDraft) || !textValue(finding.reasonDraft) ||
       !Array.isArray(finding.retrievalClaims) || finding.retrievalClaims.length > MAX_CLAIMS_PER_FINDING) {
       throw new RuntimeFailure('deepseek_output_invalid')
     }
-    if (finding.blockId !== undefined && !textValue(finding.blockId)) throw new RuntimeFailure('deepseek_output_invalid')
     if (finding.temporalContext !== undefined && !enumValue(finding.temporalContext, TEMPORAL_CONTEXTS)) throw new RuntimeFailure('deepseek_output_invalid')
     if (finding.disputeStatus !== undefined && !enumValue(finding.disputeStatus, DISPUTE_STATUSES)) throw new RuntimeFailure('deepseek_output_invalid')
     if (finding.retrievalRequired === 'must' && finding.retrievalClaims.length === 0) throw new RuntimeFailure('deepseek_output_invalid')
@@ -166,17 +168,20 @@ export function assertScreeningShape(value) {
   return value.findings
 }
 
-export function locationGate(bundle, findings) {
-  const pages = new Map(bundle.pages.map((page) => [page.pdfPage, page]))
-  for (const finding of findings) {
-    const page = pages.get(finding.pdfPage)
-    if (!page || finding.pdfPage < bundle.startPdfPage || finding.pdfPage > bundle.endPdfPage) throw new RuntimeFailure('deepseek_output_invalid')
-    const blocks = finding.blockId === undefined ? page.blocks : page.blocks.filter((block) => block.blockId === finding.blockId)
-    if (!blocks.length || !blocks.some((block) => normalizedText(block.text).includes(normalizedText(finding.originalText)))) {
-      throw new RuntimeFailure('deepseek_output_invalid')
-    }
-    if (finding.extractionReliability !== page.extractionReliability) throw new RuntimeFailure('deepseek_output_invalid')
+export function hydrateFindingLocation(bundle, finding) {
+  const page = bundle.pages.find((candidate) => candidate.pdfPage === finding.pdfPage)
+  if (!page || finding.pdfPage < bundle.startPdfPage || finding.pdfPage > bundle.endPdfPage) {
+    throw new RuntimeFailure('deepseek_output_invalid', { failurePhase: 'location_gate', locationFailureCategory: 'page_not_found' })
   }
+  const block = page.blocks.find((candidate) => candidate.blockId === finding.blockId)
+  if (!block) {
+    throw new RuntimeFailure('deepseek_output_invalid', { failurePhase: 'location_gate', locationFailureCategory: 'block_not_found' })
+  }
+  return { ...finding, originalText: block.text, extractionReliability: page.extractionReliability }
+}
+
+export function locationGate(bundle, findings) {
+  return findings.map((finding) => hydrateFindingLocation(bundle, finding))
 }
 
 function serverClaims(documentId, chapterId, findings) {
@@ -253,7 +258,7 @@ function constructCandidates(documentId, chapterId, findings, finalDrafts, retri
     }
     const candidate = {
       schemaVersion: '0.1', documentId, chapterId, pdfPage: finding.pdfPage,
-      ...(finding.blockId ? { blockId: finding.blockId } : {}), originalText: finding.originalText,
+      blockId: finding.blockId, originalText: finding.originalText,
       issueType: draft.issueType, ruleType: draft.ruleType, severity: draft.severity,
       extractionReliability: finding.extractionReliability, verificationStatus: draft.verificationStatus,
       retrievalRequired: draft.retrievalRequired, evidence, judgement: draft.judgement,
@@ -348,9 +353,9 @@ export class AiReviewRuntimeService {
         input: JSON.stringify({ chapter: bundle }), schema: SCREENING_TRANSPORT_SCHEMA, schemaName: 'legal_textbook_screening', reasoningEffort: 'low', maxOutputTokens: STAGE1_MAX_OUTPUT_TOKENS,
       })
       screeningUsage = screening.usage
-      const findings = assertScreeningShape(normalizeScreeningTransport(screening.data))
-      findingCount = findings.length
-      locationGate(bundle, findings)
+      const screenedFindings = assertScreeningShape(normalizeScreeningTransport(screening.data))
+      findingCount = screenedFindings.length
+      const findings = locationGate(bundle, screenedFindings)
       const claims = serverClaims(documentId, chapterId, findings)
       retrievalClaimCount = claims.length
       const retrievalResults = await mapConcurrent(claims, RETRIEVAL_CONCURRENCY, (claim) => this.retrievalAdapter.retrieve(claim))
@@ -375,6 +380,8 @@ export class AiReviewRuntimeService {
       const providerDiagnostic = {
         ...(error?.upstreamErrorCategory ? { upstreamErrorCategory: error.upstreamErrorCategory } : {}),
         ...(error?.upstreamErrorCode ? { upstreamErrorCode: error.upstreamErrorCode } : {}),
+        ...(error?.failurePhase === 'location_gate' ? { failurePhase: error.failurePhase } : {}),
+        ...(['page_not_found', 'block_not_found'].includes(error?.locationFailureCategory) ? { locationFailureCategory: error.locationFailureCategory } : {}),
       }
       this.logger.error?.({ provider: status.provider, model: status.model, httpStatus: error?.status, errorCode: code, ...providerDiagnostic, durationMs: error?.durationMs, usage: error?.usage })
       try {
