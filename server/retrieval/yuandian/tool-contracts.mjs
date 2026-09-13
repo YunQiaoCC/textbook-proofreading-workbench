@@ -16,9 +16,8 @@ const SEARCH_DATE_FIELDS = [
 
 // Input contract observed from the first real tools/list on 2026-09-12.
 // `allowed` is a provider-private baseline, while `used` is the smaller set
-// the v0.1 adapter may actually send. Only the statute-search response path
-// is verified; detail, article-search, vector, historical, and not-found
-// response shapes remain expectations until their own controlled discovery.
+// the v0.1 adapter may actually send. Runtime-observed response paths are
+// recorded separately from legacy-compatible synthetic response paths.
 export const YUANDIAN_TOOL_CONTRACTS = Object.freeze({
   [YUANDIAN_LAW_TOOLS.VECTOR_SEARCH]: {
     required: ['query'],
@@ -32,7 +31,12 @@ export const YUANDIAN_TOOL_CONTRACTS = Object.freeze({
         sxx: 'array:string', effect1: 'array:string', law_start: 'string', law_end: 'string',
       },
     },
-    responseFields: ['candidate list', 'id?', 'ftid?', 'fgid?', 'fgmc?', 'ftnum?', 'dy?'],
+    responseCollectionPath: ['data', 'extra', 'fatiao'],
+    responseShape: 'array',
+    responseFields: [
+      'content', 'dy', 'effect1', 'effect2', 'end', 'fgid', 'fgtitle', 'ftid',
+      'location', 'num', 'score', 'start', 'sxx', 'tag', 'type', 'url',
+    ],
   },
   [YUANDIAN_LAW_TOOLS.ARTICLE_SEARCH]: {
     required: ['keyword'],
@@ -59,6 +63,13 @@ export const YUANDIAN_TOOL_CONTRACTS = Object.freeze({
       ...SEARCH_DATE_FIELDS,
     ].map((name) => [name, 'string']).concat([['top_k', 'number']])),
     responseCollectionPath: ['data', 'data'],
+    responseShape: 'array',
+    notFoundResponseShape: {
+      dataPath: ['data'],
+      dataKeys: ['message', 'status'],
+      normalizedItemsPath: ['normalized', 'items'],
+      normalizedResultPath: ['normalized', 'resultPath'],
+    },
     responseFields: [
       '_score', 'dy', 'fbbm', 'fbrq', 'fgmc', 'fwzh', 'id',
       'ssrq', 'sxx', 'title', 'url', 'xljb_1', 'xljb_2',
@@ -69,14 +80,26 @@ export const YUANDIAN_TOOL_CONTRACTS = Object.freeze({
     allowed: ['id', 'fgmc', 'ftnum', 'refer_date'],
     used: ['id', 'fgmc', 'ftnum', 'refer_date'],
     parameterTypes: { id: 'string', fgmc: 'string', ftnum: 'string', refer_date: 'string' },
-    responseFields: ['fgmc', 'ftnum?', 'xljb_1?', 'xljb_2?', 'xljb?', 'fbrq?', 'ssrq?', 'sxx?', 'detail text'],
+    responseRecordPath: ['data', 'data'],
+    responseShape: 'object',
+    referDateInputVerifiedAccepted: true,
+    explicitHistoricalVersionMarkerObserved: false,
+    responseFields: [
+      '_score', 'content', 'fbrq', 'fgid', 'fgmc', 'ft_num', 'ftmc', 'id',
+      'ssrq', 'sxx', 'tid', 'title', 'type', 'url', 'xljb_1', 'xljb_2',
+    ],
   },
   [YUANDIAN_LAW_TOOLS.STATUTE_DETAIL]: {
     required: [],
     allowed: ['id', 'fgmc', 'refer_date'],
     used: ['id', 'fgmc', 'refer_date'],
     parameterTypes: { id: 'string', fgmc: 'string', refer_date: 'string' },
-    responseFields: ['fgmc', 'xljb_1?', 'xljb_2?', 'xljb?', 'fbrq?', 'ssrq?', 'sxx?', 'detail text'],
+    responseRecordPath: ['data', 'data'],
+    responseShape: 'object',
+    responseFields: [
+      'content', 'fbbm', 'fbrq', 'fgid', 'fgmc', 'fwzh', 'id',
+      'ssrq', 'sxx', 'type', 'url', 'xljb_1', 'xljb_2',
+    ],
   },
 })
 

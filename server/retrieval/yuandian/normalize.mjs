@@ -1,4 +1,5 @@
 import { RetrievalProviderError } from '../errors.mjs'
+import { isHistoricalClaim } from '../types.mjs'
 
 const SOURCE_TYPE_MAP = new Map([
   ['法律', 'law'],
@@ -56,12 +57,15 @@ export function readYuandianPayload(result) {
   }
 }
 
-// Finite, provider-evidenced response contracts only. The data.data path was
-// observed from a real yuandian_rh_fg_search call on 2026-09-13. Keep this list
-// explicit: retrieval must never guess that an arbitrary nested array contains
-// legal candidates.
-const SEARCH_COLLECTION_PATHS = Object.freeze([
+// Runtime-observed contracts are checked before the explicit legacy-compatible
+// paths. Keep both lists finite: retrieval must never guess that an arbitrary
+// nested array contains legal candidates.
+const OBSERVED_SEARCH_COLLECTION_PATHS = Object.freeze([
   Object.freeze(['data', 'data']),
+  Object.freeze(['data', 'extra', 'fatiao']),
+])
+
+const LEGACY_SEARCH_COLLECTION_PATHS = Object.freeze([
   Object.freeze([]),
   Object.freeze(['data']),
   Object.freeze(['results']),
@@ -90,6 +94,31 @@ const SEARCH_COLLECTION_PATHS = Object.freeze([
   Object.freeze(['list', 'list']),
 ])
 
+const OBSERVED_DETAIL_RECORD_PATH = Object.freeze(['data', 'data'])
+const LEGACY_DETAIL_RECORD_PATHS = Object.freeze([
+  Object.freeze(['data']),
+  Object.freeze(['result']),
+  Object.freeze(['record']),
+  Object.freeze(['detail']),
+])
+
+const LEGACY_DETAIL_MARKER_FIELDS = Object.freeze([
+  'id', 'ftid', 'fgid', 'fgmc', 'title', 'name', 'content', 'ftnr',
+])
+
+function plainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function hasPath(payload, path) {
+  let value = payload
+  for (const field of path) {
+    if (!plainObject(value) || !Object.hasOwn(value, field)) return false
+    value = value[field]
+  }
+  return true
+}
+
 function valueAtPath(payload, path) {
   let value = payload
   for (const field of path) {
@@ -99,25 +128,77 @@ function valueAtPath(payload, path) {
   return value
 }
 
-export function searchCandidates(payload) {
-  for (const path of SEARCH_COLLECTION_PATHS) {
-    const candidate = valueAtPath(payload, path)
-    if (Array.isArray(candidate)) return candidate
-  }
-  throw new RetrievalProviderError('provider_error', {
+function unsupportedResponseShape() {
+  return new RetrievalProviderError('provider_error', {
     providerCode: 'unsupported_response_shape',
     retryable: false,
   })
 }
 
-export function detailRecord(payload) {
-  if (!payload || typeof payload !== 'object') return null
-  if (Array.isArray(payload)) return payload[0] ?? null
-  for (const field of ['data', 'result', 'record', 'detail']) {
-    if (Array.isArray(payload[field])) return payload[field][0] ?? null
-    if (payload[field] && typeof payload[field] === 'object') return payload[field]
+function observedNotFound(payload) {
+  if (!plainObject(payload)) return false
+  const wrapperFields = ['data', 'normalized', 'ok', 'requestId', 'routeKey', 'status', 'tool']
+  for (const field of wrapperFields) {
+    if (!Object.hasOwn(payload, field)) return false
   }
-  return payload
+  if (Object.keys(payload).some((field) => !wrapperFields.includes(field))) return false
+  if (typeof payload.ok !== 'boolean') return false
+  if (typeof payload.requestId !== 'string' || typeof payload.routeKey !== 'string') return false
+  if (typeof payload.status !== 'number' || typeof payload.tool !== 'string') return false
+  if (!plainObject(payload.data)) return false
+  if (Object.hasOwn(payload.data, 'data')) return false
+  if (!Object.hasOwn(payload.data, 'message') || !Object.hasOwn(payload.data, 'status')) return false
+  if (Object.keys(payload.data).some((field) => !['message', 'status'].includes(field))) return false
+  if (!plainObject(payload.normalized)) return false
+  if (Object.keys(payload.normalized).some((field) => !['hasItems', 'itemCount', 'items', 'resultPath'].includes(field))) {
+    return false
+  }
+  if (!Array.isArray(payload.normalized.items) || payload.normalized.items.length !== 0) return false
+  if (payload.normalized.resultPath !== null) return false
+  if (typeof payload.normalized.hasItems !== 'boolean') return false
+  if (typeof payload.normalized.itemCount !== 'number') return false
+  return true
+}
+
+export function classifyYuandianSearchPayload(payload) {
+  for (const path of OBSERVED_SEARCH_COLLECTION_PATHS) {
+    if (!hasPath(payload, path)) continue
+    const candidate = valueAtPath(payload, path)
+    if (!Array.isArray(candidate)) throw unsupportedResponseShape()
+    return { kind: 'candidates', candidates: candidate }
+  }
+  for (const path of LEGACY_SEARCH_COLLECTION_PATHS) {
+    const candidate = valueAtPath(payload, path)
+    if (Array.isArray(candidate)) return { kind: 'candidates', candidates: candidate }
+  }
+  if (observedNotFound(payload)) return { kind: 'not_found', candidates: [] }
+  throw unsupportedResponseShape()
+}
+
+export function searchCandidates(payload) {
+  return classifyYuandianSearchPayload(payload).candidates
+}
+
+function legacyDetailRecord(value) {
+  const record = Array.isArray(value) ? value[0] : value
+  if (!plainObject(record)) return undefined
+  return LEGACY_DETAIL_MARKER_FIELDS.some((field) => Object.hasOwn(record, field))
+    ? record
+    : undefined
+}
+
+export function detailRecord(payload) {
+  if (hasPath(payload, OBSERVED_DETAIL_RECORD_PATH)) {
+    const record = valueAtPath(payload, OBSERVED_DETAIL_RECORD_PATH)
+    if (!plainObject(record)) throw unsupportedResponseShape()
+    return record
+  }
+  for (const path of LEGACY_DETAIL_RECORD_PATHS) {
+    if (!hasPath(payload, path)) continue
+    const record = legacyDetailRecord(valueAtPath(payload, path))
+    if (record) return record
+  }
+  throw unsupportedResponseShape()
 }
 
 function supportSummary(claim, title, record) {
@@ -158,6 +239,7 @@ export function normalizeYuandianDetail({ claim, record, searchCandidate, provid
   const effectiveDate = firstValue(record, ['ssrq', 'effectiveDate'])
   const validity = firstValue(record, ['sxx', 'validityStatus', 'status'])
   const resolvedVersionDate = firstValue(record, ['versionDate', 'version_date', 'xdrq']) ?? null
+  const historicalRequest = isHistoricalClaim(claim)
   let sufficient = true
 
   if (!title || (claim.knownSourceTitle && comparable(title) !== comparable(claim.knownSourceTitle))) {
@@ -178,13 +260,13 @@ export function normalizeYuandianDetail({ claim, record, searchCandidate, provid
     warnings.push('jurisdiction_mismatch')
     sufficient = false
   }
-  if (claim.kind === 'historical_version' && !resolvedVersionDate) {
+  if (historicalRequest && !resolvedVersionDate) {
     warnings.push('version_resolution_not_explicit')
   }
 
   const limitations = [...mapping.limitations]
   if (effectiveDate) limitations.push(`effective date (schema gap): ${effectiveDate}`)
-  if (claim.kind === 'historical_version' && !resolvedVersionDate) {
+  if (historicalRequest && !resolvedVersionDate) {
     limitations.push('provider did not explicitly identify the resolved version date')
   }
 
@@ -208,7 +290,7 @@ export function normalizeYuandianDetail({ claim, record, searchCandidate, provid
     retrievedAt,
     query: claim.knownSourceTitle ?? claim.text,
     referenceDate: claim.referenceDate,
-    requestedReferDate: claim.kind === 'historical_version' || ['historical', 'mixed'].includes(claim.temporalContext)
+    requestedReferDate: historicalRequest
       ? claim.referenceDate
       : undefined,
     resolvedVersionDate,

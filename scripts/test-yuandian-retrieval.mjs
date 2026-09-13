@@ -11,8 +11,22 @@ import {
   getYuandianStatus,
   validateYuandianRuntimeSchema,
 } from '../server/retrieval/index.mjs'
-import { mapYuandianSourceType } from '../server/retrieval/yuandian/normalize.mjs'
+import {
+  articleDetailSelector,
+  statuteDetailSelector,
+} from '../server/retrieval/yuandian/adapter.mjs'
+import {
+  classifyYuandianSearchPayload,
+  detailRecord,
+  mapYuandianSourceType,
+  readYuandianPayload,
+  searchCandidates,
+} from '../server/retrieval/yuandian/normalize.mjs'
+import { observedFgDetailResponse } from './fixtures/yuandian-fg-detail-observed.mjs'
 import { observedFgSearchResponse } from './fixtures/yuandian-fg-search-observed.mjs'
+import { observedFtDetailResponse } from './fixtures/yuandian-ft-detail-observed.mjs'
+import { observedNotFoundResponse } from './fixtures/yuandian-not-found-observed.mjs'
+import { observedVectorSearchResponse } from './fixtures/yuandian-vector-search-observed.mjs'
 
 const SECRET = 'test-secret-must-not-leak'
 const NOW = new Date('2026-09-12T00:00:00.000Z')
@@ -354,6 +368,258 @@ test('unsupported provider response and secret do not enter provider-neutral res
   assert.equal(serialized.includes(rawMarker), false)
   assert.equal(serialized.includes(SECRET), false)
   assert.equal(serialized.includes('authorization'), false)
+})
+
+test('observed fg detail data.data object is parsed with content body', () => {
+  const record = detailRecord(readYuandianPayload(observedFgDetailResponse()))
+  assert.equal(record.content, 'FAKE_CONTENT')
+  assert.equal(record.id, 'FAKE_ID')
+  assert.equal(record.fgid, 'FAKE_FGID')
+})
+
+test('observed fg detail normalizes canonical id before fgid', async () => {
+  const { adapter } = harness([
+    { tool: 'yuandian_rh_fg_search', result: statuteSearch('FAKE_LAW', { id: 'FAKE_SEARCH_ID' }) },
+    { tool: 'yuandian_rh_fg_detail', result: observedFgDetailResponse() },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-observed-fg-detail', kind: 'legal_status', text: 'FAKE_STATUS_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.equal(result.provenance.providerRecordId, 'FAKE_ID')
+})
+
+test('observed fg detail retains defensive fgid record-id fallback', async () => {
+  const { adapter } = harness([
+    { tool: 'yuandian_rh_fg_search', result: statuteSearch('FAKE_LAW', { id: 'FAKE_SEARCH_ID' }) },
+    {
+      tool: 'yuandian_rh_fg_detail',
+      result: observedFgDetailResponse({ id: undefined, fgid: 'FAKE_FGID' }),
+    },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-observed-fgid', kind: 'legal_status', text: 'FAKE_STATUS_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.equal(result.provenance.providerRecordId, 'FAKE_FGID')
+})
+
+test('malformed observed detail data.data array fails closed', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: mcp({ data: { data: [] } }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-detail-array', kind: 'article_text', text: 'FAKE_ARTICLE_CLAIM',
+    knownSourceTitle: 'FAKE_LAW', knownArticleNumber: 'FAKE_ARTICLE',
+  })
+  assert.equal(result.status, 'provider_error')
+  assert.equal(result.error.providerCode, 'unsupported_response_shape')
+})
+
+test('unknown detail wrapper fails closed', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: mcp({ unknownDetail: { fgmc: 'FAKE_LAW', content: 'FAKE_CONTENT' } }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-detail-unknown', kind: 'article_text', text: 'FAKE_ARTICLE_CLAIM',
+    knownSourceTitle: 'FAKE_LAW', knownArticleNumber: 'FAKE_ARTICLE',
+  })
+  assert.equal(result.status, 'provider_error')
+  assert.equal(result.error.providerCode, 'unsupported_response_shape')
+})
+
+test('detail parser never treats an arbitrary root object as a record', () => {
+  assert.throws(
+    () => detailRecord({ fgmc: 'FAKE_LAW', content: 'FAKE_CONTENT' }),
+    (error) => error.code === 'provider_error' && error.providerCode === 'unsupported_response_shape',
+  )
+})
+
+test('observed ft detail data.data object normalizes ft_num and content', async () => {
+  const response = observedFtDetailResponse()
+  const record = detailRecord(readYuandianPayload(response))
+  assert.equal(record.ft_num, 'FAKE_ARTICLE')
+  assert.equal(record.content, 'FAKE_CONTENT')
+
+  const { adapter } = harness([{ tool: 'yuandian_rh_ft_detail', result: response }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-observed-ft-detail', kind: 'article_text', text: 'FAKE_ARTICLE_CLAIM',
+    knownSourceTitle: 'FAKE_LAW', knownArticleNumber: 'FAKE_ARTICLE',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.match(result.evidence[0].supports, /FAKE_ARTICLE/u)
+  assert.equal(result.provenance.providerRecordId, 'FAKE_ID')
+})
+
+test('observed article tid is not promoted to canonical providerRecordId', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: observedFtDetailResponse({ id: undefined, fgid: undefined, tid: 'FAKE_TID' }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-tid-not-canonical', kind: 'article_text', text: 'FAKE_ARTICLE_CLAIM',
+    knownSourceTitle: 'FAKE_LAW', knownArticleNumber: 'FAKE_ARTICLE',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.equal(Object.hasOwn(result.provenance, 'providerRecordId'), false)
+  assert.equal(JSON.stringify(result).includes('FAKE_TID'), false)
+})
+
+test('observed historical detail parses without inventing version semantics', async () => {
+  const { adapter, session } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: observedFtDetailResponse(),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-observed-history', kind: 'article_text', text: 'FAKE_HISTORY_CLAIM',
+    knownSourceTitle: 'FAKE_LAW', knownArticleNumber: 'FAKE_ARTICLE',
+    temporalContext: 'historical', referenceDate: '2010-01-01',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.equal(session.calls[0].request.arguments.refer_date, '2010-01-01')
+  assert.equal(result.provenance.resolvedVersionDate, null)
+  assert.ok(result.warnings.includes('version_resolution_not_explicit'))
+  assert.match(result.evidence[0].limitations, /did not explicitly identify the resolved version date/u)
+})
+
+test('observed real not-found wrapper classifies and returns not_found', async () => {
+  const payload = readYuandianPayload(observedNotFoundResponse())
+  assert.deepEqual(classifyYuandianSearchPayload(payload), { kind: 'not_found', candidates: [] })
+
+  const { adapter, session } = harness([
+    { tool: 'yuandian_rh_fg_search', result: observedNotFoundResponse() },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-real-not-found', kind: 'legal_status', text: 'FAKE_MISSING_CLAIM',
+    knownSourceTitle: 'FAKE_MISSING_LAW',
+  })
+  assert.equal(result.status, 'not_found')
+  assert.equal(session.calls.length, 1)
+})
+
+test('normalized.items empty alone is insufficient for not_found', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_fg_search',
+    result: mcp({ normalized: { hasItems: false, itemCount: 0, items: [], resultPath: null } }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-items-only', kind: 'legal_status', text: 'FAKE_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.equal(result.status, 'provider_error')
+})
+
+test('data.data absent alone is insufficient for not_found', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_fg_search',
+    result: mcp({ data: { message: 'FAKE_MESSAGE', status: 'FAKE_STATUS' } }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-data-only', kind: 'legal_status', text: 'FAKE_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.equal(result.status, 'provider_error')
+})
+
+test('malformed observed not-found normalized wrapper fails closed', async () => {
+  const malformed = observedNotFoundResponse()
+  malformed.structuredContent.normalized.resultPath = 'FAKE_NON_NULL_PATH'
+  const { adapter } = harness([{ tool: 'yuandian_rh_fg_search', result: malformed }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-malformed-not-found', kind: 'legal_status', text: 'FAKE_CLAIM',
+    knownSourceTitle: 'FAKE_LAW',
+  })
+  assert.equal(result.status, 'provider_error')
+  assert.equal(result.error.providerCode, 'unsupported_response_shape')
+})
+
+test('observed vector data.extra.fatiao collection is extracted', () => {
+  const candidates = searchCandidates(readYuandianPayload(observedVectorSearchResponse()))
+  assert.equal(candidates.length, 1)
+  assert.equal(candidates[0].ftid, 'FAKE_FTID')
+  assert.equal(candidates[0].fgid, 'FAKE_FGID')
+  assert.equal(candidates[0].fgtitle, 'FAKE_LAW')
+  assert.equal(candidates[0].num, 'FAKE_ARTICLE')
+})
+
+test('malformed observed vector fatiao non-array fails closed', () => {
+  assert.throws(
+    () => searchCandidates({ data: { extra: { fatiao: { id: 'FAKE_ID' } } } }),
+    (error) => error.code === 'provider_error' && error.providerCode === 'unsupported_response_shape',
+  )
+})
+
+test('observed vector ftid becomes canonical article detail id request', async () => {
+  const { adapter, session } = harness([
+    { tool: 'yuandian_law_vector_search', result: observedVectorSearchResponse() },
+    { tool: 'yuandian_rh_ft_detail', result: observedFtDetailResponse() },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-vector-ftid', kind: 'normative_proposition', text: 'FAKE_VECTOR_CLAIM',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.deepEqual(session.calls[1].request.arguments, { id: 'FAKE_FTID' })
+})
+
+test('vector fgid remains a statute-selector alias for canonical id request', () => {
+  const [candidate] = searchCandidates(readYuandianPayload(observedVectorSearchResponse({ ftid: undefined })))
+  assert.deepEqual(statuteDetailSelector(candidate, {}), { id: 'FAKE_FGID' })
+})
+
+test('vector fgtitle and num aliases are scoped to vector article selection', async () => {
+  const { adapter, session } = harness([
+    {
+      tool: 'yuandian_law_vector_search',
+      result: observedVectorSearchResponse({ ftid: undefined }),
+    },
+    { tool: 'yuandian_rh_ft_detail', result: observedFtDetailResponse() },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-vector-title-number', kind: 'normative_proposition', text: 'FAKE_VECTOR_CLAIM',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.deepEqual(session.calls[1].request.arguments, { fgmc: 'FAKE_LAW', ftnum: 'FAKE_ARTICLE' })
+
+  assert.throws(
+    () => articleDetailSelector({ fgtitle: 'FAKE_LAW', num: 'FAKE_ARTICLE' }, {}),
+    (error) => error.code === 'invalid_request',
+  )
+})
+
+test('observed detail raw content never enters provider-neutral result', async () => {
+  const rawBody = 'SYNTHETIC_OBSERVED_RAW_BODY_MARKER'
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: observedFtDetailResponse({ content: rawBody }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-observed-raw-body', kind: 'article_text', text: 'FAKE_ARTICLE_CLAIM',
+    knownSourceTitle: 'FAKE_LAW', knownArticleNumber: 'FAKE_ARTICLE',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.equal(JSON.stringify(result).includes(rawBody), false)
+})
+
+test('runtime response metadata records observed paths without historical claims', () => {
+  const vector = YUANDIAN_TOOL_CONTRACTS.yuandian_law_vector_search
+  const statuteSearchContract = YUANDIAN_TOOL_CONTRACTS.yuandian_rh_fg_search
+  const statuteDetailContract = YUANDIAN_TOOL_CONTRACTS.yuandian_rh_fg_detail
+  const articleDetailContract = YUANDIAN_TOOL_CONTRACTS.yuandian_rh_ft_detail
+  assert.deepEqual(vector.responseCollectionPath, ['data', 'extra', 'fatiao'])
+  assert.equal(vector.responseShape, 'array')
+  assert.deepEqual(statuteSearchContract.responseCollectionPath, ['data', 'data'])
+  assert.equal(statuteSearchContract.responseShape, 'array')
+  assert.deepEqual(statuteDetailContract.responseRecordPath, ['data', 'data'])
+  assert.equal(statuteDetailContract.responseShape, 'object')
+  assert.deepEqual(articleDetailContract.responseRecordPath, ['data', 'data'])
+  assert.equal(articleDetailContract.responseShape, 'object')
+  assert.equal(articleDetailContract.referDateInputVerifiedAccepted, true)
+  assert.equal(articleDetailContract.explicitHistoricalVersionMarkerObserved, false)
+  assert.equal(Object.hasOwn(articleDetailContract, 'historicalVersionField'), false)
 })
 
 test('known article routes directly to article detail', async () => {

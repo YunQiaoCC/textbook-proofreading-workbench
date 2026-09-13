@@ -6,10 +6,10 @@ import {
 } from '../types.mjs'
 import { YUANDIAN_LAW_TOOLS } from './tool-contracts.mjs'
 import {
+  classifyYuandianSearchPayload,
   detailRecord,
   normalizeYuandianDetail,
   readYuandianPayload,
-  searchCandidates,
 } from './normalize.mjs'
 
 export const MAX_PROVIDER_CALLS_PER_CLAIM = 3
@@ -52,6 +52,15 @@ function selectorFor(detailTool, candidate, claim) {
     : statuteDetailSelector(candidate, claim)
 }
 
+function candidateForSelector(candidate, searchTool) {
+  if (searchTool !== YUANDIAN_LAW_TOOLS.VECTOR_SEARCH) return candidate
+  return {
+    ...candidate,
+    fgmc: nonEmpty(candidate?.fgmc) ?? nonEmpty(candidate?.fgtitle),
+    ftnum: nonEmpty(candidate?.ftnum) ?? nonEmpty(candidate?.ft_num) ?? nonEmpty(candidate?.num),
+  }
+}
+
 function resultForError(claimId, error) {
   const normalized = normalizeProviderError(error)
   const status = normalized.code === 'missing_api_key'
@@ -81,12 +90,15 @@ export class YuandianRetrievalAdapter {
 
   async #searchThenDetail(context, claim, searchTool, searchArgs, detailTool) {
     const searchResult = await this.#call(context, searchTool, searchArgs)
-    const candidate = searchCandidates(readYuandianPayload(searchResult))[0]
+    const classified = classifyYuandianSearchPayload(readYuandianPayload(searchResult))
+    if (classified.kind === 'not_found') return { notFound: true }
+    const candidate = classified.candidates[0]
     if (!candidate) return { notFound: true }
+    const selectorCandidate = candidateForSelector(candidate, searchTool)
     const detailResult = await this.#call(
       context,
       detailTool,
-      withDetailReferDate(claim, detailTool, selectorFor(detailTool, candidate, claim)),
+      withDetailReferDate(claim, detailTool, selectorFor(detailTool, selectorCandidate, claim)),
     )
     return { detailResult, candidate, detailTool }
   }
