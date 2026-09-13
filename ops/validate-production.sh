@@ -1,25 +1,71 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+if (( EUID != 0 )); then
+  exec sudo -- "$0" "$@"
+fi
+
 umask 077
 
 BASE_URL="${BASE_URL:-https://proofread.kycloudmimi.site}"
 NODE_BIN="${NODE_BIN:-$(command -v node)}"
+AUTH_ENV_FILE="${AUTH_ENV_FILE:-/etc/textbook-proofreading/auth.env}"
 TMP_ROOT="$(mktemp -d -t textbook-production-smoke-XXXXXX)"
-NETRC_FILE="$TMP_ROOT/netrc"
+LOGIN_BODY="$TMP_ROOT/login.json"
+LOGIN_HEADERS="$TMP_ROOT/login.headers"
+COOKIE_JAR="$TMP_ROOT/cookies"
+DOCUMENT_ID=""
 
 cleanup() {
+  set +e
+  if [[ -n "$DOCUMENT_ID" && -f "$LOGIN_BODY" ]]; then
+    : > "$COOKIE_JAR"
+    curl --max-time 45 -sS -o /dev/null -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+      -X POST -H 'content-type: application/json' --data-binary "@$LOGIN_BODY" \
+      "$BASE_URL/api/auth/login" 2>/dev/null
+    curl --max-time 45 -sS -o /dev/null -b "$COOKIE_JAR" \
+      -X DELETE "$BASE_URL/api/documents/$DOCUMENT_ID" 2>/dev/null
+  fi
   rm -rf -- "$TMP_ROOT"
 }
 trap cleanup EXIT
 
-read -r -s BASIC_AUTH_PASSWORD
-printf 'machine proofread.kycloudmimi.site login proofreader password %s\n' "$BASIC_AUTH_PASSWORD" > "$NETRC_FILE"
-chmod 600 "$NETRC_FILE"
-unset BASIC_AUTH_PASSWORD
+"$NODE_BIN" -e '
+const fs = require("node:fs")
+const input = process.argv[1]
+const output = process.argv[2]
+const text = fs.readFileSync(input, "utf8")
+const values = new Map()
+for (const rawLine of text.split(/\r?\n/)) {
+  const line = rawLine.trim()
+  if (!line || line.startsWith("#")) continue
+  const match = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(rawLine)
+  if (!match || values.has(match[1])) throw new Error("invalid auth environment format")
+  if (!["WORKBENCH_ACCESS_USERNAME", "WORKBENCH_ACCESS_PASSWORD"].includes(match[1])) {
+    throw new Error("unexpected auth environment key")
+  }
+  values.set(match[1], match[2])
+}
+const username = values.get("WORKBENCH_ACCESS_USERNAME")
+const password = values.get("WORKBENCH_ACCESS_PASSWORD")
+if (typeof username !== "string" || !username.trim() || username !== "proofreader") {
+  throw new Error("invalid workbench username configuration")
+}
+if (typeof password !== "string" || !password.trim()) {
+  throw new Error("invalid workbench password configuration")
+}
+fs.writeFileSync(output, JSON.stringify({ username, password }), { mode: 0o600 })
+' "$AUTH_ENV_FILE" "$LOGIN_BODY"
+
+: > "$COOKIE_JAR"
 
 curl_status() {
-  curl --max-time 45 --netrc-file "$NETRC_FILE" -sS -o /dev/null -w '%{http_code}' "$@"
+  curl --max-time 45 -sS -o /dev/null -w '%{http_code}' "$@"
+}
+
+auth_curl_status() {
+  curl --max-time 45 -sS -o /dev/null -w '%{http_code}' \
+    -c "$COOKIE_JAR" -b "$COOKIE_JAR" "$@"
 }
 
 json_value() {
@@ -31,8 +77,54 @@ json_value() {
 json_request() {
   local output="$1"
   shift
-  curl --max-time 45 --netrc-file "$NETRC_FILE" -sS -o "$output" -w '%{http_code}' "$@"
+  curl --max-time 45 -sS -o "$output" -w '%{http_code}' \
+    -c "$COOKIE_JAR" -b "$COOKIE_JAR" "$@"
 }
+
+public_json_request() {
+  local output="$1"
+  shift
+  curl --max-time 45 -sS -o "$output" -w '%{http_code}' "$@"
+}
+
+login() {
+  : > "$COOKIE_JAR"
+  curl --max-time 45 -sS -o "$TMP_ROOT/login-response.json" -D "$LOGIN_HEADERS" \
+    -w '%{http_code}' -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+    -X POST -H 'content-type: application/json' --data-binary "@$LOGIN_BODY" \
+    "$BASE_URL/api/auth/login"
+}
+
+test "$(curl_status "$BASE_URL/")" = 200
+test "$(curl_status "$BASE_URL/login")" = 200
+
+UNAUTH_SESSION_FILE="$TMP_ROOT/unauth-session.json"
+UNAUTH_SESSION_CODE="$(public_json_request "$UNAUTH_SESSION_FILE" "$BASE_URL/api/auth/session")"
+test "$UNAUTH_SESSION_CODE" = 200
+test "$(json_value "$UNAUTH_SESSION_FILE" 'x.authenticated')" = false
+
+UNAUTH_DOCUMENTS_FILE="$TMP_ROOT/unauth-documents.json"
+UNAUTH_DOCUMENTS_CODE="$(public_json_request "$UNAUTH_DOCUMENTS_FILE" "$BASE_URL/api/documents")"
+test "$UNAUTH_DOCUMENTS_CODE" = 401
+test "$(json_value "$UNAUTH_DOCUMENTS_FILE" 'x.error')" = authentication_required
+
+LOGIN_CODE="$(login)"
+test "$LOGIN_CODE" = 200
+test "$(json_value "$TMP_ROOT/login-response.json" 'x.authenticated')" = true
+test "$(json_value "$TMP_ROOT/login-response.json" 'x.account.username')" = proofreader
+grep -qi '^set-cookie: proofread_session=' "$LOGIN_HEADERS"
+grep -qi '^set-cookie: .*; HttpOnly' "$LOGIN_HEADERS"
+grep -qi '^set-cookie: .*; Secure' "$LOGIN_HEADERS"
+grep -qi '^set-cookie: .*; SameSite=Lax' "$LOGIN_HEADERS"
+
+AUTH_SESSION_FILE="$TMP_ROOT/auth-session.json"
+AUTH_SESSION_CODE="$(json_request "$AUTH_SESSION_FILE" "$BASE_URL/api/auth/session")"
+test "$AUTH_SESSION_CODE" = 200
+test "$(json_value "$AUTH_SESSION_FILE" 'x.authenticated')" = true
+
+AUTH_DOCUMENTS_FILE="$TMP_ROOT/auth-documents.json"
+AUTH_DOCUMENTS_CODE="$(json_request "$AUTH_DOCUMENTS_FILE" "$BASE_URL/api/documents")"
+test "$AUTH_DOCUMENTS_CODE" = 200
 
 # Create a valid two-page, uncompressed PDF without using any production
 # document. It gives the chapter smoke a real page boundary to validate.
@@ -76,7 +168,7 @@ EXPECTED_PARTS="$(json_value "$UPLOAD_CREATE" 'x.expectedParts')"
 for ((part = 1; part <= EXPECTED_PARTS; part += 1)); do
   PART_FILE="$TMP_ROOT/part-$part"
   dd if="$PDF_FILE" of="$PART_FILE" bs=16777216 skip=$((part - 1)) count=1 status=none
-  PART_CODE="$(curl_status -X PUT -H 'content-type: application/octet-stream' --data-binary "@$PART_FILE" "$BASE_URL/api/uploads/$UPLOAD_ID/parts/$part")"
+  PART_CODE="$(auth_curl_status -X PUT -H 'content-type: application/octet-stream' --data-binary "@$PART_FILE" "$BASE_URL/api/uploads/$UPLOAD_ID/parts/$part")"
   test "$PART_CODE" = 201
 done
 
@@ -141,8 +233,8 @@ test "$STALE_SECOND_CODE" = 409
 FILE_HEADERS="$TMP_ROOT/file-headers"
 RANGE_HEADERS="$TMP_ROOT/range-headers"
 FILE_URL="$BASE_URL/api/documents/$DOCUMENT_ID/file"
-FULL_CODE="$(curl_status -D "$FILE_HEADERS" "$FILE_URL")"
-HEAD_CODE="$(curl_status -I "$FILE_URL")"
+FULL_CODE="$(auth_curl_status -D "$FILE_HEADERS" "$FILE_URL")"
+HEAD_CODE="$(auth_curl_status -I "$FILE_URL")"
 ETAG="$(awk 'tolower($1) == "etag:" { gsub("\r", "", $2); print $2 }' "$FILE_HEADERS")"
 LAST_MODIFIED="$(awk 'tolower($1) == "last-modified:" { $1=""; sub(/^ /, ""); gsub("\r", ""); print }' "$FILE_HEADERS")"
 test "$FULL_CODE" = 200
@@ -150,20 +242,33 @@ test "$HEAD_CODE" = 200
 test -n "$ETAG"
 test -n "$LAST_MODIFIED"
 
-RANGE_CODE="$(curl_status -D "$RANGE_HEADERS" -H 'Range: bytes=0-99' "$FILE_URL")"
+RANGE_CODE="$(auth_curl_status -D "$RANGE_HEADERS" -H 'Range: bytes=0-99' "$FILE_URL")"
 test "$RANGE_CODE" = 206
 grep -qi '^accept-ranges: bytes' "$RANGE_HEADERS"
 grep -qi '^content-range: bytes 0-99/' "$RANGE_HEADERS"
 
-CONDITIONAL_RANGE_CODE="$(curl_status -H 'Range: bytes=0-99' -H "If-None-Match: $ETAG" "$FILE_URL")"
-IF_RANGE_CODE="$(curl_status -H 'Range: bytes=0-99' -H "If-Range: $ETAG" "$FILE_URL")"
-STALE_IF_RANGE_CODE="$(curl_status -H 'Range: bytes=0-99' -H 'If-Range: "stale"' "$FILE_URL")"
+CONDITIONAL_RANGE_CODE="$(auth_curl_status -H 'Range: bytes=0-99' -H "If-None-Match: $ETAG" "$FILE_URL")"
+IF_RANGE_CODE="$(auth_curl_status -H 'Range: bytes=0-99' -H "If-Range: $ETAG" "$FILE_URL")"
+STALE_IF_RANGE_CODE="$(auth_curl_status -H 'Range: bytes=0-99' -H 'If-Range: "stale"' "$FILE_URL")"
 test "$CONDITIONAL_RANGE_CODE" = 304
 test "$IF_RANGE_CODE" = 206
 test "$STALE_IF_RANGE_CODE" = 200
 
-sudo systemctl restart textbook-proofreading-api
-sleep 1
+# Restart recovery remains part of the original production validation. The
+# in-memory session must be replaced after the restart before reading data.
+OLD_MAIN_PID="$(systemctl show -p MainPID --value textbook-proofreading-api.service)"
+systemctl restart textbook-proofreading-api.service
+for _ in {1..30}; do
+  [[ "$(systemctl is-active textbook-proofreading-api.service)" = active ]] && break
+  sleep 1
+done
+test "$(systemctl is-active textbook-proofreading-api.service)" = active
+NEW_MAIN_PID="$(systemctl show -p MainPID --value textbook-proofreading-api.service)"
+test -n "$NEW_MAIN_PID"
+test "$NEW_MAIN_PID" != "$OLD_MAIN_PID"
+test "$(auth_curl_status "$BASE_URL/api/documents")" = 401
+test "$(login)" = 200
+
 CHAPTERS_AFTER_FILE="$TMP_ROOT/chapters-after.json"
 WORKSPACE_A_AFTER_FILE="$TMP_ROOT/workspace-a-after.json"
 WORKSPACE_B_AFTER_FILE="$TMP_ROOT/workspace-b-after.json"
@@ -179,11 +284,29 @@ test "$(json_value "$WORKSPACE_B_AFTER_FILE" 'x.revision')" = 1
 test "$(json_value "$WORKSPACE_A_AFTER_FILE" 'x.issues.length')" = 1
 test "$(json_value "$WORKSPACE_B_AFTER_FILE" 'x.issues.length')" = 1
 
-echo 'production-authenticated-root=pass'
+DELETE_CODE="$(auth_curl_status -X DELETE "$BASE_URL/api/documents/$DOCUMENT_ID")"
+test "$DELETE_CODE" = 204
+DOCUMENT_ID=""
+
+LOGOUT_CODE="$(auth_curl_status -X POST "$BASE_URL/api/auth/logout")"
+test "$LOGOUT_CODE" = 204
+test "$(auth_curl_status "$BASE_URL/api/documents")" = 401
+
+AFTER_LOGOUT_SESSION_FILE="$TMP_ROOT/after-logout-session.json"
+AFTER_LOGOUT_SESSION_CODE="$(json_request "$AFTER_LOGOUT_SESSION_FILE" "$BASE_URL/api/auth/session")"
+test "$AFTER_LOGOUT_SESSION_CODE" = 200
+test "$(json_value "$AFTER_LOGOUT_SESSION_FILE" 'x.authenticated')" = false
+
+echo 'production-public-static-spa=pass'
+echo 'production-unauthenticated-api-401=pass'
+echo 'production-application-login-session=pass'
+echo 'production-session-cookie-flags=pass'
 echo 'production-authenticated-api=pass'
 echo 'production-chunk-upload-and-inspection=pass'
 echo 'production-chapter-a-b-persistence=pass'
 echo 'production-cross-chapter-revision-independence=pass'
 echo 'production-same-chapter-409=pass'
 echo 'production-https-range-and-conditionals=pass'
-echo 'production-restart-recovery=pass'
+echo 'production-restart-recovery-and-relogin=pass'
+echo 'production-logout-and-old-cookie-401=pass'
+echo 'production-synthetic-document-cleanup=pass'

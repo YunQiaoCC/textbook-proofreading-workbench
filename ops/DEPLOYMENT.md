@@ -170,6 +170,17 @@ uses Nginx Basic Auth. In the dedicated cutover round:
 7. run public login/logout plus unauthenticated 401 and authenticated 200
    smoke checks.
 
-Update `ops/validate-production.sh` to the session model as part of that same
-cutover. Use only synthetic, public, or open-access PDFs for deployment smoke
-tests; never upload an unpublished textbook during validation.
+Run the session-auth production validation as root so it can read the protected
+credential file without sourcing it:
+
+```bash
+sudo ops/validate-production.sh
+```
+
+The script parses `/etc/textbook-proofreading/auth.env` strictly, keeps the
+credential and cookie jar in a mode-700 temporary directory, never prints
+either value, validates unauthenticated and authenticated behavior, exercises
+only its own synthetic PDF, verifies restart recovery after logging in again,
+logs out, and removes the synthetic document. Use only synthetic, public, or
+open-access PDFs for any additional deployment smoke tests; never upload an
+unpublished textbook during validation.
