@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, nextTick, watch } from 'vue'
 import type { ApiDocument, ApiChapter, ChapterInput } from '../services/documentApi'
 import type { DocumentTextJob } from '../models/document'
+import { aiReviewStageLabelMap, type AiReviewStage, type AiReviewSummary } from '../models/aiReview'
 
 const props = defineProps<{
   documents: readonly ApiDocument[]
@@ -17,6 +18,7 @@ const props = defineProps<{
   deleteError: string
   textSummary: DocumentTextJob | null
   textError: string
+  aiReviews: readonly AiReviewSummary[]
 }>()
 
 const emit = defineEmits<{
@@ -32,13 +34,6 @@ const selectedDocument = computed(() =>
   props.documents.find((document) => document.id === props.selectedDocumentId) ?? null,
 )
 
-const statusLabels = {
-  unassigned: '未分配',
-  not_started: '未开始',
-  in_progress: '进行中',
-  completed: '已完成',
-} as const
-
 const documentStatusLabels = {
   uploaded: '已上传',
   inspecting: '检查中',
@@ -48,7 +43,6 @@ const documentStatusLabels = {
   processing: '处理中',
 } as const
 
-const statusOptions = Object.entries(statusLabels) as Array<[ApiChapter['status'], string]>
 const formOpen = ref(false)
 const formSubmitting = ref(false)
 const deleteTarget = ref<ApiDocument | null>(null)
@@ -58,8 +52,8 @@ const form = reactive<ChapterInput>({
   title: '', order: 1, startPdfPage: 1, endPdfPage: 1, assigneeName: '', status: 'not_started',
 })
 
-function statusLabel(status: ApiChapter['status']) {
-  return statusLabels[status] ?? status
+function chapterReviewStage(chapterId: string): AiReviewStage {
+  return props.aiReviews.find((review) => review.chapterId === chapterId)?.stage ?? 'awaiting_ai'
 }
 
 function documentStatusLabel(status: ApiDocument['processingStatus']) {
@@ -231,12 +225,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
             type="button"
             @click="emit('selectChapter', chapter.id)"
           >
-            <span class="chapter-status" :class="`status-${chapter.status}`" />
+            <span class="chapter-status" :class="`status-${chapterReviewStage(chapter.id)}`" />
             <span class="chapter-copy">
               <strong>{{ chapter.title }}</strong>
               <span>PDF {{ chapter.startPdfPage }}–{{ chapter.endPdfPage }} · {{ chapter.assigneeName ? `负责人：${chapter.assigneeName}` : '未指定负责人' }}</span>
             </span>
-            <span class="chapter-progress">{{ statusLabel(chapter.status) }}</span>
+            <span class="chapter-progress">{{ aiReviewStageLabelMap[chapterReviewStage(chapter.id)] }}</span>
           </button>
           <button class="chapter-edit" type="button" aria-label="编辑章节" @click.stop="openEdit(chapter)">编辑</button>
         </div>
@@ -263,7 +257,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
               <label>起始 PDF 页<input v-model.number="form.startPdfPage" :max="selectedDocument.pageCount" min="1" type="number" :disabled="formSubmitting" /></label>
               <label>结束 PDF 页<input v-model.number="form.endPdfPage" :max="selectedDocument.pageCount" min="1" type="number" :disabled="formSubmitting" /></label>
             </div>
-            <label>状态<select v-model="form.status" :disabled="formSubmitting"><option v-for="[value, label] in statusOptions" :key="value" :value="value">{{ label }}</option></select></label>
             <p v-if="chapterError" class="chapter-form-error" role="alert">{{ chapterError }}</p>
           </div>
           <div class="chapter-form-actions">
@@ -278,11 +271,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
     <p v-if="loading || chapterLoading" class="outline-note">正在加载{{ chapterLoading ? '章节…' : '文档…' }}</p>
     <p v-if="error || chapterError" class="outline-error" role="alert">{{ error || chapterError }}</p>
 
-    <div class="outline-footer">
-      <div class="team-title"><span class="team-icon">♧</span> 校对协作</div>
-      <div class="team-avatars"><span class="mini-avatar gold">校</span><span class="mini-avatar blue">复</span><span class="mini-avatar gray">+2</span></div>
-      <span class="team-note">负责人仅为分工信息</span>
-    </div>
     <Teleport to="body">
       <div v-if="deleteTarget" class="document-delete-backdrop">
         <section class="document-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="document-delete-title">
@@ -302,8 +290,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
 </template>
 
 <style scoped>
-.outline-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; padding: 20px 12px 14px; background: #f8f9fb; border-right: 1px solid #dce1e9; }
-.outline-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 7px 16px; }
+.outline-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; padding: 14px 12px 12px; background: #f8f9fb; border-right: 1px solid #dce1e9; }
+.outline-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 7px 11px; }
 .panel-kicker { color: #99a2b2; font-size: 9px; font-weight: 700; letter-spacing: .14em; }
 h2 { margin: 4px 0 0; color: #253047; font-size: 17px; }
 .document-count, .chapter-count { display: grid; min-width: 21px; height: 18px; padding: 0 5px; place-items: center; color: #728096; font-size: 9px; background: #e8edf4; border-radius: 9px; }
@@ -316,7 +304,7 @@ h2 { margin: 4px 0 0; color: #253047; font-size: 17px; }
 .empty-document { display: flex; flex-direction: column; gap: 5px; padding: 18px 8px; color: #9da7b5; text-align: center; }
 .empty-document strong { color: #6e7c91; font-size: 11px; }
 .empty-document span { font-size: 9px; }
-.doc-card { display: flex; align-items: center; gap: 9px; margin-bottom: 20px; padding: 10px; background: #eef1f6; border: 1px solid #e0e5ec; border-radius: 8px; }
+.doc-card { display: flex; align-items: center; gap: 9px; margin-bottom: 13px; padding: 9px; background: #eef1f6; border: 1px solid #e0e5ec; border-radius: 8px; }
 .doc-card-icon { display: grid; width: 27px; height: 31px; place-items: center; color: #4d6d9f; font-size: 18px; background: #dce6f5; border-radius: 5px; }
 .doc-card-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .doc-card-copy strong { overflow: hidden; color: #354159; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
@@ -330,9 +318,10 @@ h2 { margin: 4px 0 0; color: #253047; font-size: 17px; }
 .chapter-row:hover, .chapter-row.active { background: #e8edf5; }
 .chapter-row.active::before { position: absolute; top: 8px; bottom: 8px; left: 0; width: 3px; background: #4e6f9e; border-radius: 3px; content: ""; }
 .chapter-status { width: 7px; height: 7px; flex: 0 0 auto; background: #c7ced8; border: 1px solid #b7c0cc; border-radius: 50%; }
-.chapter-status.status-in_progress { background: #6e9fc1; border-color: #5b89ab; }
-.chapter-status.status-completed { background: #d8b576; border-color: #c79f5d; }
-.chapter-status.status-unassigned { background: #c7ced8; }
+.chapter-status.status-ai_running,.chapter-status.status-human_review_in_progress { background: #6e9fc1; border-color: #5b89ab; }
+.chapter-status.status-awaiting_human_review { background: #c7a466; border-color: #b58e4d; }
+.chapter-status.status-completed { background: #69a184; border-color: #568b70; }
+.chapter-status.status-ai_failed { background: #b87575; border-color: #a35e5e; }
 .chapter-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .chapter-copy strong { overflow: hidden; color: #445069; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .chapter-row.active .chapter-copy strong { color: #28456e; }
@@ -367,13 +356,6 @@ h2 { margin: 4px 0 0; color: #253047; font-size: 17px; }
 .chapter-form-actions .primary:hover:not(:disabled) { background: #3f608d; }
 .outline-note { margin: 9px 7px 0; color: #71819a; font-size: 9px; }
 .outline-error { margin: 7px 7px 0; color: #a55555; font-size: 9px; line-height: 1.4; }
-.outline-footer { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin-top: auto; padding: 14px 7px 0; border-top: 1px solid #e5e9ef; }
-.team-title { width: 100%; color: #7c8799; font-size: 10px; }
-.team-icon { margin-right: 5px; color: #b18a4e; font-size: 16px; }
-.team-avatars { display: flex; }
-.mini-avatar { display: grid; width: 23px; height: 23px; place-items: center; margin-right: -4px; color: #fff; font-size: 9px; border: 2px solid #f8f9fb; border-radius: 50%; }
-.mini-avatar.gold { background: #b68c4c; } .mini-avatar.blue { background: #6681a8; } .mini-avatar.gray { background: #9ca8b9; }
-.team-note { margin-left: auto; color: #a2aab7; font-size: 8px; }
 
 .outline-panel.collapsed > :not(.chapter-drawer) { opacity: 0; visibility: hidden; pointer-events: none; }
 .document-item { display: flex; align-items: stretch; min-width: 0; }

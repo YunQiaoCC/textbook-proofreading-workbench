@@ -364,11 +364,6 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="document-uploader" aria-label="上传教材">
-    <div class="uploader-heading">
-      <span class="uploader-kicker">IMPORT PDF</span>
-      <strong>导入教材</strong>
-    </div>
-
     <label class="file-picker" :class="{ disabled: isRunning }">
       <span aria-hidden="true">＋</span>
       {{ selectedFile ? '更换 PDF' : '选择 PDF' }}
@@ -399,10 +394,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.document-uploader { padding: 13px 12px 12px; background: #f1f4f8; border-bottom: 1px solid #dce2ea; }
-.uploader-heading { display: flex; flex-direction: column; gap: 3px; margin-bottom: 9px; }
-.uploader-kicker { color: #99a4b4; font-size: 8px; font-weight: 700; letter-spacing: .14em; }
-.uploader-heading strong { color: #34425b; font-size: 12px; }
+.document-uploader { padding: 9px 12px; background: #f1f4f8; border-bottom: 1px solid #dce2ea; }
 .file-picker { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 6px; color: #496991; font-size: 10px; background: #fff; border: 1px solid #cbd8e7; border-radius: 5px; cursor: pointer; }
 .file-picker:hover { background: #f6f9fd; border-color: #a9bfd8; }
 .file-picker.disabled { cursor: not-allowed; opacity: .6; }

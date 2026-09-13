@@ -194,6 +194,19 @@ async function main() {
       assert.throws(() => app.aiReviewRepository.recordPath('../escape', initial.chapter.id))
     })
 
+    await runTest('document-summary-includes-empty-workspace-without-writing', async () => {
+      const result = await request(baseUrl, `/api/documents/${initial.documentId}/ai-reviews`)
+      assert.equal(result.response.status, 200)
+      assert.deepEqual(result.body, {
+        documentId: initial.documentId,
+        reviews: [{ chapterId: initial.chapter.id, stage: 'awaiting_ai', candidateCount: 0, pendingCount: 0 }],
+      })
+      await assert.rejects(
+        stat(app.aiReviewRepository.recordPath(initial.documentId, initial.chapter.id)),
+        (error) => error?.code === 'ENOENT',
+      )
+    })
+
     await runTest('awaiting-ai-to-ai-running', async () => {
       initial.workspace = await app.aiReviewService.startAiRun(initial.documentId, initial.chapter.id, 0)
       assert.equal(initial.workspace.stage, 'ai_running')
@@ -210,6 +223,17 @@ async function main() {
       )
       assert.equal(initial.workspace.stage, 'awaiting_human_review')
       assert.equal(initial.workspace.aiRun.status, 'completed')
+    })
+
+    await runTest('document-summary-reports-persisted-stage-and-counts', async () => {
+      const result = await request(baseUrl, `/api/documents/${initial.documentId}/ai-reviews`)
+      assert.equal(result.response.status, 200)
+      assert.deepEqual(result.body.reviews, [{
+        chapterId: initial.chapter.id,
+        stage: 'awaiting_human_review',
+        candidateCount: 1,
+        pendingCount: 1,
+      }])
     })
 
     const failed = await runningFixture()
@@ -689,7 +713,7 @@ async function main() {
       'completed',
       'ai_failed',
     ])
-    assert.equal(testCount, 32)
+    assert.equal(testCount, 34)
     console.log(`ai-review-workflow-test-count=${testCount}`)
     console.log('llm-provider-calls=0')
   } finally {

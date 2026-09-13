@@ -13,7 +13,6 @@ import {
 } from '../../services/proofreadingStorage'
 import type { ProofreadingIssue, ProofreadingIssuePatch, IssueStatus } from '../../models/proofreading'
 import { deleteIssueSnapshot } from './issueDeletion'
-import { exportProofreadingCsv } from '../../services/proofreadingExport'
 import {
   annotationToIssue,
   annotationValueToStore,
@@ -41,10 +40,11 @@ function readableError(error: unknown, fallback: string) {
 }
 
 export function useProofreadingWorkspace(
-  defaultReviewer: string,
+  defaultReviewer: MaybeRef<string>,
   documentId: MaybeRef<string | null>,
   chapterId: MaybeRef<string | null>,
   chapterStartPdfPage: MaybeRef<number | null>,
+  readOnly: MaybeRef<boolean> = false,
 ) {
   const annotations = ref<IAnnotationStore[]>([])
   const issues = ref<ProofreadingIssue[]>([])
@@ -263,7 +263,7 @@ export function useProofreadingWorkspace(
   }
 
   function createIssue(annotationId = `manual-${crypto.randomUUID()}`) {
-    if (!hasActiveScope()) return
+    if (!hasActiveScope() || toValue(readOnly)) return
     const now = new Date().toISOString()
     const issue: ProofreadingIssue = {
       id: `issue-${annotationId}`,
@@ -274,8 +274,8 @@ export function useProofreadingWorkspace(
       category: 'other',
       suggestion: '',
       reason: '',
-      status: 'pending',
-      reviewer: defaultReviewer,
+      status: 'confirmed',
+      reviewer: toValue(defaultReviewer),
       verifier: '',
       createdAt: now,
       updatedAt: now,
@@ -289,7 +289,7 @@ export function useProofreadingWorkspace(
   function addManualIssue() { createIssue() }
 
   function ensureIssueForAnnotation(annotationValue: InkLayerAnnotationValue) {
-    if (!hasActiveScope()) return null
+    if (!hasActiveScope() || toValue(readOnly)) return null
     const annotation = annotationValueToStore(annotationValue)
     const existing = issues.value.find((issue) => issue.annotationId === annotation.id)
     if (existing) {
@@ -297,7 +297,7 @@ export function useProofreadingWorkspace(
       persistClientState()
       return existing
     }
-    const issue = annotationToIssue(storeToAnnotation(annotation), defaultReviewer)
+    const issue = annotationToIssue(storeToAnnotation(annotation), toValue(defaultReviewer))
     issues.value = [issue, ...issues.value]
     selectedIssueId.value = issue.id
     persistClientState()
@@ -306,6 +306,7 @@ export function useProofreadingWorkspace(
   }
 
   function updateIssue(id: string, patch: ProofreadingIssuePatch) {
+    if (toValue(readOnly)) return
     issues.value = issues.value.map((issue) => issue.id === id
       ? { ...issue, ...patch, updatedAt: new Date().toISOString() }
       : issue)
@@ -315,6 +316,7 @@ export function useProofreadingWorkspace(
   function updateIssueStatus(id: string, status: IssueStatus) { updateIssue(id, { status }) }
 
   function syncAnnotation(annotationValue: InkLayerAnnotationValue) {
+    if (toValue(readOnly)) return
     const annotation = annotationValueToStore(annotationValue)
     const index = annotations.value.findIndex((item) => item.id === annotation.id)
     annotations.value = index === -1
@@ -324,19 +326,19 @@ export function useProofreadingWorkspace(
   }
 
   function handleAnnotationAdded(annotation: InkLayerAnnotationValue) {
-    if (!hasActiveScope()) return
+    if (!hasActiveScope() || toValue(readOnly)) return
     syncAnnotation(annotation)
     ensureIssueForAnnotation(annotation)
   }
 
   function handleAnnotationUpdated(annotation: InkLayerAnnotationValue) {
-    if (!hasActiveScope()) return
+    if (!hasActiveScope() || toValue(readOnly)) return
     syncAnnotation(annotation)
     ensureIssueForAnnotation(annotation)
   }
 
   function handleAnnotationDeleted(annotationId: string) {
-    if (!hasActiveScope()) return
+    if (!hasActiveScope() || toValue(readOnly)) return
     const linkedIssue = issues.value.find((issue) => issue.annotationId === annotationId)
     if (linkedIssue) {
       const next = deleteIssueSnapshot(issues.value, annotations.value, selectedIssueId.value, linkedIssue.id)
@@ -352,7 +354,7 @@ export function useProofreadingWorkspace(
   }
 
   function deleteIssue(issueId: string) {
-    if (!hasActiveScope()) return null
+    if (!hasActiveScope() || toValue(readOnly)) return null
     const next = deleteIssueSnapshot(issues.value, annotations.value, selectedIssueId.value, issueId)
     if (!next.deleted) return null
     issues.value = next.issues
@@ -364,11 +366,11 @@ export function useProofreadingWorkspace(
   }
 
   function handleAnnotationSelected(annotation: InkLayerAnnotationValue | null) {
-    if (annotation) ensureIssueForAnnotation(annotation)
+    if (annotation && !toValue(readOnly)) ensureIssueForAnnotation(annotation)
   }
 
   function handleSave(nextAnnotations: InkLayerAnnotationValue[]) {
-    if (!hasActiveScope()) return
+    if (!hasActiveScope() || toValue(readOnly)) return
     annotations.value = nextAnnotations.map(annotationValueToStore)
     scheduleServerSave()
   }
@@ -415,6 +417,5 @@ export function useProofreadingWorkspace(
     handleSave,
     flushPendingSave,
     reload,
-    exportIssues: () => exportProofreadingCsv(issues.value),
   }
 }

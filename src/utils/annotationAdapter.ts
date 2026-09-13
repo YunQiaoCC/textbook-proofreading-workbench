@@ -37,7 +37,7 @@ export function annotationToIssue(
     category: 'other',
     suggestion: '',
     reason: '',
-    status: 'pending',
+    status: 'confirmed',
     reviewer,
     createdAt: now,
     updatedAt: now,

@@ -149,6 +149,17 @@ async function handleRequest(request, response, uploadService, documentReadServi
   }
 
   if (
+    segments.length === 4 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'ai-reviews'
+  ) {
+    if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    sendJson(response, 200, await aiReviewService.listSummaries(segments[2]))
+    return
+  }
+
+  if (
     segments.length === 6 &&
     segments[0] === 'api' &&
     segments[1] === 'documents' &&

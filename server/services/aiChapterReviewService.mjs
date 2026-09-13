@@ -186,6 +186,23 @@ export class AiChapterReviewService {
       createEmptyAiReviewWorkspace(documentId, chapterId)
   }
 
+  async listSummaries(documentId) {
+    if (!validIdentifier(documentId) || !(await this.documentRepository.getById(documentId))) {
+      throw new HttpError(404, 'document_not_found', 'document not found')
+    }
+    const chapters = await this.documentRepository.listChapters(documentId)
+    const reviews = await Promise.all(chapters.map(async (chapter) => {
+      const workspace = await this.aiReviewRepository.get(documentId, chapter.id)
+      return {
+        chapterId: chapter.id,
+        stage: workspace?.stage ?? 'awaiting_ai',
+        candidateCount: workspace?.candidates.length ?? 0,
+        pendingCount: workspace?.candidates.filter(({ resolution }) => resolution.status === 'pending').length ?? 0,
+      }
+    }))
+    return { documentId, reviews }
+  }
+
   async current(documentId, chapterId) {
     const chapter = await this.assertChapter(documentId, chapterId)
     const workspace = (await this.aiReviewRepository.get(documentId, chapterId)) ??
