@@ -120,6 +120,8 @@ async function main() {
     assert.equal(chapterA.response.status, 201)
     assert.equal(chapterB.response.status, 201)
     assert.equal(chapterBDocument.response.status, 201)
+    await app.aiReviewService.startAiRun('document-a', chapterA.body.id, 0)
+    await app.aiReviewService.startAiRun('document-b', chapterBDocument.body.id, 0)
     const bProof = await jsonRequest(
       baseUrl,
       '/api/documents/document-b/chapters/' + chapterBDocument.body.id + '/proofreading',
@@ -179,11 +181,14 @@ async function main() {
     )
     assert.equal(bProofStillThere.response.status, 200)
     assert.equal(bProofStillThere.body.issues[0].id, 'issue-b')
+    const bAiReviewStillThere = await app.aiReviewService.get('document-b', chapterBDocument.body.id)
+    assert.equal(bAiReviewStillThere.stage, 'ai_running')
 
     await assertMissing(path.join(root, 'documents', 'document-a'))
     await assertMissing(path.join(root, 'metadata', 'documents', 'document-a.json'))
     await assertMissing(path.join(root, 'metadata', 'proofreading', 'document-a.json'))
     await assertMissing(path.join(root, 'metadata', 'proofreading', 'document-a'))
+    await assertMissing(path.join(root, 'metadata', 'ai-reviews', 'document-a'))
     await assertMissing(path.join(root, 'text', 'document-a'))
     await assertMissing(path.join(root, 'metadata', 'text', 'document-a.json'))
     await assertMissing(path.join(root, 'metadata', 'text', 'document-a-ocr-triage.json'))

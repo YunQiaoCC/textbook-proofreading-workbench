@@ -3,12 +3,14 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { createServerConfig } from './config.mjs'
 import { FileBackedDocumentRepository } from './repositories/fileBackedDocumentRepository.mjs'
+import { FileBackedAiReviewRepository } from './repositories/fileBackedAiReviewRepository.mjs'
 import { FileBackedProofreadingRepository } from './repositories/fileBackedProofreadingRepository.mjs'
 import { FileBackedTextRepository } from './repositories/fileBackedTextRepository.mjs'
 import { LocalDocumentStorage } from './services/localDocumentStorage.mjs'
 import { PopplerInspectionService } from './services/popplerInspection.mjs'
 import { DocumentReadService } from './services/documentReadService.mjs'
 import { ChapterService } from './services/chapterService.mjs'
+import { AiChapterReviewService } from './services/aiChapterReviewService.mjs'
 import { MAX_PROOFREADING_BODY_BYTES, ProofreadingService } from './services/proofreadingService.mjs'
 import { HttpError, UploadSessionService } from './services/uploadSessionService.mjs'
 import { DocumentLifecycleCoordinator } from './services/documentLifecycleCoordinator.mjs'
@@ -74,7 +76,7 @@ function errorResponse(error) {
       message: error.message,
       ...(error.details ? { details: error.details } : {}),
     }
-    if (error.code === 'proofreading_revision_conflict') {
+    if (['proofreading_revision_conflict', 'ai_review_revision_conflict'].includes(error.code)) {
       body.currentRevision = error.details?.currentRevision
     }
     return {
@@ -99,7 +101,7 @@ function errorResponse(error) {
   }
 }
 
-async function handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService, documentDeletionService, documentTextService) {
+async function handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService, aiReviewService, documentDeletionService, documentTextService) {
   const segments = routeSegments(request.url ?? '/')
 
   if (segments.length === 2 && segments[0] === 'api' && segments[1] === 'documents') {
@@ -188,6 +190,67 @@ async function handleRequest(request, response, uploadService, documentReadServi
       return
     }
     throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+  }
+
+  if (
+    segments.length === 6 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'chapters' &&
+    segments[5] === 'ai-review'
+  ) {
+    if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    sendJson(response, 200, await aiReviewService.get(segments[2], segments[4]))
+    return
+  }
+
+  if (
+    segments.length === 8 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'chapters' &&
+    segments[5] === 'ai-review' &&
+    segments[6] === 'human-review' &&
+    ['start', 'complete'].includes(segments[7])
+  ) {
+    if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    const body = await readJsonBody(request)
+    const workspace = segments[7] === 'start'
+      ? await aiReviewService.startHumanReview(
+        segments[2],
+        segments[4],
+        body.reviewerName,
+        body.baseRevision,
+      )
+      : await aiReviewService.completeHumanReview(
+        segments[2],
+        segments[4],
+        body.reviewerName,
+        body.baseRevision,
+      )
+    sendJson(response, 200, workspace)
+    return
+  }
+
+  if (
+    segments.length === 9 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'chapters' &&
+    segments[5] === 'ai-review' &&
+    segments[6] === 'candidates' &&
+    segments[8] === 'resolution'
+  ) {
+    if (request.method !== 'PUT') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    const body = await readJsonBody(request)
+    sendJson(response, 200, await aiReviewService.resolveCandidate(
+      segments[2],
+      segments[4],
+      segments[7],
+      body,
+      body.baseRevision,
+    ))
+    return
   }
 
   if (
@@ -297,6 +360,10 @@ export async function createIngestionServer(options = {}) {
   const lifecycleCoordinator = new DocumentLifecycleCoordinator()
   const documentStorage = new LocalDocumentStorage(config.storageRoot)
   const documentRepository = new FileBackedDocumentRepository(config.storageRoot, { lifecycleCoordinator })
+  const aiReviewRepository = new FileBackedAiReviewRepository(config.storageRoot, {
+    lifecycleCoordinator,
+    documentExists: async (documentId) => Boolean(await documentRepository.getById(documentId)),
+  })
   const proofreadingRepository = new FileBackedProofreadingRepository(config.storageRoot, {
     lifecycleCoordinator,
     documentExists: async (documentId) => Boolean(await documentRepository.getById(documentId)),
@@ -305,6 +372,7 @@ export async function createIngestionServer(options = {}) {
   const documentReadService = new DocumentReadService({ documentRepository, documentStorage })
   const chapterService = new ChapterService({ documentRepository })
   const proofreadingService = new ProofreadingService({ documentRepository, proofreadingRepository })
+  const aiReviewService = new AiChapterReviewService({ documentRepository, aiReviewRepository })
   const nativeTextExtractor = options.nativeTextExtractor ?? new NativePdfTextExtractor({
     pdftotextBin: options.pdftotextBin,
     timeoutMs: options.textExtractionPageTimeoutMs,
@@ -322,6 +390,7 @@ export async function createIngestionServer(options = {}) {
   })
   const documentDeletionService = new DocumentDeletionService({
     documentRepository,
+    aiReviewRepository,
     proofreadingRepository,
     textRepository,
     documentStorage,
@@ -333,6 +402,7 @@ export async function createIngestionServer(options = {}) {
   })
   await documentStorage.init()
   await documentRepository.init()
+  await aiReviewRepository.init()
   await proofreadingRepository.init()
   await inspectionService.init()
   await documentTextService.init()
@@ -348,7 +418,7 @@ export async function createIngestionServer(options = {}) {
   await uploadService.init()
 
   const server = createHttpServer((request, response) => {
-    void handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService, documentDeletionService, documentTextService).catch((error) => {
+    void handleRequest(request, response, uploadService, documentReadService, chapterService, proofreadingService, aiReviewService, documentDeletionService, documentTextService).catch((error) => {
       if (!response.headersSent) {
         const result = errorResponse(error)
         sendJson(response, result.statusCode, result.body, result.headers)
@@ -371,6 +441,8 @@ export async function createIngestionServer(options = {}) {
     documentRepository,
     documentReadService,
     chapterService,
+    aiReviewRepository,
+    aiReviewService,
     proofreadingRepository,
     proofreadingService,
     textRepository,

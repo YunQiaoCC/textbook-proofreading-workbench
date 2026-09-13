@@ -1,7 +1,11 @@
-import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  candidateInvariantErrors as contractInvariantErrors,
+  candidateSchemaErrors,
+  stableCandidateId as stableIssueId,
+} from '../server/candidates/candidateContract.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const skillRoot = path.join(repositoryRoot, 'skills', 'legal-textbook-proofreading')
@@ -46,117 +50,6 @@ function parseJson(filePath) {
     fail(`${path.relative(repositoryRoot, filePath)}: invalid JSON (${error.message})`)
     return null
   }
-}
-
-function resolveRef(rootSchema, reference) {
-  if (!reference.startsWith('#/')) throw new Error(`unsupported schema reference: ${reference}`)
-  return reference.slice(2).split('/').reduce((value, segment) => value[segment.replaceAll('~1', '/').replaceAll('~0', '~')], rootSchema)
-}
-
-function typeMatches(value, type) {
-  if (type === 'object') return value !== null && typeof value === 'object' && !Array.isArray(value)
-  if (type === 'array') return Array.isArray(value)
-  if (type === 'integer') return Number.isSafeInteger(value)
-  if (type === 'number') return typeof value === 'number' && Number.isFinite(value)
-  if (type === 'string') return typeof value === 'string'
-  if (type === 'boolean') return typeof value === 'boolean'
-  if (type === 'null') return value === null
-  return true
-}
-
-function validateValue(value, rule, rootSchema, location = '$') {
-  const errors = []
-  if (rule.$ref) return validateValue(value, resolveRef(rootSchema, rule.$ref), rootSchema, location)
-  if (rule.const !== undefined && value !== rule.const) errors.push(`${location}: expected constant ${JSON.stringify(rule.const)}`)
-  if (rule.enum && !rule.enum.some((item) => JSON.stringify(item) === JSON.stringify(value))) {
-    errors.push(`${location}: unsupported enum value ${JSON.stringify(value)}`)
-  }
-  if (rule.type && !typeMatches(value, rule.type)) {
-    errors.push(`${location}: expected ${rule.type}`)
-    return errors
-  }
-  if (typeof value === 'string') {
-    if (rule.minLength !== undefined && value.length < rule.minLength) errors.push(`${location}: string is too short`)
-    if (rule.pattern && !(new RegExp(rule.pattern)).test(value)) errors.push(`${location}: does not match ${rule.pattern}`)
-  }
-  if (typeof value === 'number' && rule.minimum !== undefined && value < rule.minimum) {
-    errors.push(`${location}: must be >= ${rule.minimum}`)
-  }
-  if (Array.isArray(value)) {
-    if (rule.minItems !== undefined && value.length < rule.minItems) errors.push(`${location}: requires at least ${rule.minItems} item(s)`)
-    if (rule.items) value.forEach((item, index) => errors.push(...validateValue(item, rule.items, rootSchema, `${location}[${index}]`)))
-  }
-  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    for (const required of rule.required ?? []) {
-      if (!Object.hasOwn(value, required)) errors.push(`${location}: missing required property ${required}`)
-    }
-    if (rule.additionalProperties === false && rule.properties) {
-      for (const key of Object.keys(value)) {
-        if (!Object.hasOwn(rule.properties, key)) errors.push(`${location}: unexpected property ${key}`)
-      }
-    }
-    for (const [key, propertyRule] of Object.entries(rule.properties ?? {})) {
-      if (Object.hasOwn(value, key)) errors.push(...validateValue(value[key], propertyRule, rootSchema, `${location}.${key}`))
-    }
-  }
-  for (const nested of rule.allOf ?? []) errors.push(...validateValue(value, nested, rootSchema, location))
-  if (rule.if) {
-    const conditionErrors = validateValue(value, rule.if, rootSchema, location)
-    if (conditionErrors.length === 0 && rule.then) errors.push(...validateValue(value, rule.then, rootSchema, location))
-  }
-  if (rule.not && validateValue(value, rule.not, rootSchema, location).length === 0) {
-    errors.push(`${location}: matches a forbidden schema`)
-  }
-  return errors
-}
-
-function normalizeOriginalText(value) {
-  return value.normalize('NFKC').replace(/\s+/gu, ' ').trim()
-}
-
-function sha256(value) {
-  return createHash('sha256').update(value, 'utf8').digest('hex')
-}
-
-function stableIssueId(issue) {
-  const textFingerprint = sha256(normalizeOriginalText(issue.originalText))
-  const canonical = [
-    issue.documentId,
-    issue.chapterId,
-    String(issue.pdfPage),
-    issue.blockId ?? '',
-    issue.issueType,
-    textFingerprint,
-  ].join('\n')
-  return `ltp_${sha256(canonical).slice(0, 16)}`
-}
-
-function contractInvariantErrors(issue) {
-  const errors = []
-  if (issue.humanResolution !== 'pending') errors.push('new AI candidate must remain pending')
-  if (issue.ruleType === 'static') {
-    if (issue.retrievalRequired !== 'no') errors.push('static issue must use retrievalRequired=no')
-    const allowedStatus = issue.extractionReliability === 'low' ? 'manual_check_required' : 'not_required'
-    if (issue.verificationStatus !== allowedStatus) errors.push('static issue has inconsistent verificationStatus')
-  }
-  if (issue.ruleType === 'verify') {
-    if (issue.retrievalRequired !== 'must') errors.push('verify issue must use retrievalRequired=must')
-    if (issue.verificationStatus === 'not_required') errors.push('verify issue cannot use not_required')
-    if (issue.verificationStatus !== 'verified' && issue.judgement === 'confirmed_error') {
-      errors.push('verify issue cannot use confirmed_error without verified status')
-    }
-  }
-  if (issue.verificationStatus === 'verified' && (!Array.isArray(issue.evidence) || issue.evidence.length === 0)) {
-    errors.push('verified issue requires evidence')
-  }
-  if (issue.extractionReliability === 'low') {
-    if (issue.verificationStatus !== 'manual_check_required') errors.push('low extraction requires manual_check_required')
-    if (issue.judgement === 'confirmed_error') errors.push('low extraction forbids confirmed_error')
-  }
-  if (issue.disputeStatus === 'academic_dispute' && issue.judgement === 'confirmed_error') {
-    errors.push('academic dispute must not be confirmed_error')
-  }
-  return errors
 }
 
 const companions = [
@@ -219,7 +112,7 @@ if (!Array.isArray(verificationFixtures)) {
     const issue = { ...baseFixtureIssue, ...(fixture.overrides ?? {}) }
     issue.id = stableIssueId(issue)
     const errors = [
-      ...validateValue(issue, schema, schema),
+      ...candidateSchemaErrors(issue),
       ...contractInvariantErrors(issue),
     ]
     const actualValid = errors.length === 0
@@ -297,7 +190,7 @@ for (const golden of goldenEntries) {
     continue
   }
   if (schema) {
-    for (const error of validateValue(issue, schema, schema)) fail(`${golden.caseId}: ${error}`)
+    for (const error of candidateSchemaErrors(issue)) fail(`${golden.caseId}: ${error}`)
   }
   for (const [issueField, inputField] of [
     ['documentId', 'documentId'], ['chapterId', 'chapterId'], ['pdfPage', 'pdfPage'],

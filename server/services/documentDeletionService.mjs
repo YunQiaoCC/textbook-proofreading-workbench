@@ -7,9 +7,10 @@ function notFound() {
 }
 
 export class DocumentDeletionService {
-  constructor({ documentRepository, proofreadingRepository, textRepository, documentStorage, lifecycleCoordinator }) {
+  constructor({ documentRepository, proofreadingRepository, aiReviewRepository, textRepository, documentStorage, lifecycleCoordinator }) {
     this.documentRepository = documentRepository
     this.proofreadingRepository = proofreadingRepository
+    this.aiReviewRepository = aiReviewRepository
     this.documentStorage = documentStorage
     this.textRepository = textRepository
     this.lifecycleCoordinator = lifecycleCoordinator
@@ -26,6 +27,7 @@ export class DocumentDeletionService {
       }
       await this.documentStorage.removeDocument(documentId)
       await this.proofreadingRepository.removeDocumentFiles(documentId)
+      await this.aiReviewRepository.removeDocumentFiles(documentId)
       await this.textRepository.removeDocument(documentId)
       await this.documentRepository.removeDocumentRecord(documentId)
     })

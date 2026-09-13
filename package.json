@@ -18,6 +18,7 @@
     "test:issue-delete": "node scripts/test-issue-delete.mjs",
     "test:text-extraction": "node scripts/test-text-extraction.mjs",
     "test:legal-skill": "node scripts/validate-legal-proofreading-skill.mjs",
+    "test:ai-review-workflow": "node scripts/test-ai-review-workflow.mjs",
     "test:yuandian-retrieval": "node scripts/test-yuandian-retrieval.mjs",
     "smoke:yuandian-production": "node scripts/smoke-yuandian-production.mjs"
   },
