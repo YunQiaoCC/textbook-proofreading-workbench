@@ -123,7 +123,7 @@ onMounted(() => { void loadDocuments() })
       </section>
       <aside class="review-panel" aria-label="校对意见">
         <template v-if="selectedDocument&&selectedChapter">
-          <ReviewWorkflowBar :workspace="aiReview.workspace.value" :assignee-name="reviewerName" :manual-count="issues.length" :loading="aiReview.loading.value" :acting="aiReview.acting.value" :error="aiReview.error.value" :conflict="aiReview.conflict.value" @start="refreshAfterAiAction(aiReview.startHumanReview)" @complete="completeReview" @reload="reloadAll"/>
+          <ReviewWorkflowBar :workspace="aiReview.workspace.value" :runtime-status="aiReview.runtimeStatus.value" :assignee-name="reviewerName" :manual-count="issues.length" :loading="aiReview.loading.value" :acting="aiReview.acting.value" :error="aiReview.error.value" :conflict="aiReview.conflict.value" @run="refreshAfterAiAction(aiReview.startOrRetryAiReview)" @start="refreshAfterAiAction(aiReview.startHumanReview)" @complete="completeReview" @reload="reloadAll"/>
           <IssueList :items="reviewQueue" :selected-key="selectedQueueKey" :read-only="reviewCompleted" @select="selectQueueItem" @create="createManualIssue"/>
           <AiCandidateEditor v-if="selectedQueueItem?.source==='ai'" :entry="selectedQueueItem.entry" :stage="aiReview.workspace.value?.stage??'awaiting_ai'" :reviewer-name="reviewerName" :acting="aiReview.acting.value" @accept="(id)=>refreshAfterAiAction(()=>aiReview.acceptCandidate(id))" @reject="(id)=>refreshAfterAiAction(()=>aiReview.rejectCandidate(id))" @modify="modifyCandidate"/>
           <IssueEditor v-else :issue="selectedQueueItem?.source==='human'?selectedQueueItem.issue:null" :reviewer-name="reviewerName" :read-only="reviewCompleted" @update="updateIssue" @delete="onIssueDeleted"/>

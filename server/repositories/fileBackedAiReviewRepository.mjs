@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { rm } from 'node:fs/promises'
+import { readdir, rm } from 'node:fs/promises'
 import { atomicWriteJson, ensureDirectory, readJson } from '../utils/fs.mjs'
 import { DocumentLifecycleCoordinator, DocumentNotFoundError } from '../services/documentLifecycleCoordinator.mjs'
 
@@ -68,6 +68,28 @@ export class FileBackedAiReviewRepository {
       if (error?.code === 'ENOENT') return null
       throw error
     }
+  }
+
+  async listWorkspaces() {
+    const workspaces = []
+    const documents = await readdir(this.metadataRoot, { withFileTypes: true })
+    for (const document of documents) {
+      if (!document.isDirectory() || !validIdentifier(document.name)) continue
+      const directory = this.documentDirectory(document.name)
+      const entries = await readdir(directory, { withFileTypes: true })
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+        const chapterId = entry.name.slice(0, -5)
+        if (!validIdentifier(chapterId)) continue
+        const workspace = await this.get(document.name, chapterId)
+        if (workspace) workspaces.push(workspace)
+      }
+    }
+    return workspaces
+  }
+
+  async listRunningWorkspaces() {
+    return (await this.listWorkspaces()).filter((workspace) => workspace.stage === 'ai_running')
   }
 
   async ensureDocumentExists(documentId) {

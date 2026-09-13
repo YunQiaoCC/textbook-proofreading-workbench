@@ -122,6 +122,24 @@ export interface AiReviewWorkspace {
     completedAt?: string
     failedAt?: string
     errorCode?: string
+    provider?: 'deepseek'
+    model?: string
+    skillVersion?: string
+    skillHash?: string
+    coverage?: {
+      totalPages: number
+      readyPages: number
+      suspiciousPages: number
+      unavailablePages: number
+      blankPages: number
+      coveredTextPages: number
+      complete: boolean
+    }
+    usage?: Record<string, unknown>
+    findingCount?: number
+    retrievalClaimCount?: number
+    evidenceFoundCount?: number
+    candidateCount?: number
   }
   humanReview: {
     status: 'not_started' | 'in_progress' | 'completed'
@@ -132,6 +150,12 @@ export interface AiReviewWorkspace {
   candidates: AiCandidateEntry[]
   createdAt: string | null
   updatedAt: string | null
+}
+
+export interface AiRuntimeStatus {
+  configured: boolean
+  provider: 'deepseek'
+  model: string
 }
 
 export interface AiReviewSummary {

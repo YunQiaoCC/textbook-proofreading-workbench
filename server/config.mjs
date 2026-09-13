@@ -5,6 +5,7 @@ export const DEFAULT_MAX_DOCUMENT_SIZE = 1024 * 1024 * 1024
 export const DEFAULT_CHUNK_SIZE = 16 * 1024 * 1024
 export const DEFAULT_INSPECTION_TIMEOUT_MS = 5 * 60 * 1000
 export const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000
+export const DEFAULT_AI_REVIEW_MAX_CHAPTER_CHARS = 500_000
 
 function positiveInteger(value, fallback) {
   const parsed = Number(value)
@@ -18,6 +19,10 @@ export function createServerConfig(overrides = {}) {
   const envTimeout = positiveInteger(
     process.env.INSPECTION_TIMEOUT_MS,
     DEFAULT_INSPECTION_TIMEOUT_MS,
+  )
+  const envAiReviewMaxChapterChars = positiveInteger(
+    process.env.AI_REVIEW_MAX_CHAPTER_CHARS,
+    DEFAULT_AI_REVIEW_MAX_CHAPTER_CHARS,
   )
 
   const authRequired = overrides.authRequired ?? process.env.WORKBENCH_AUTH_REQUIRED === '1'
@@ -44,5 +49,6 @@ export function createServerConfig(overrides = {}) {
     accessUsername,
     accessPassword,
     sessionTtlMs: overrides.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS,
+    aiReviewMaxChapterChars: overrides.aiReviewMaxChapterChars ?? envAiReviewMaxChapterChars,
   }
 }

@@ -3,6 +3,7 @@ Description=Textbook proofreading Node API
 After=network.target
 
 [Service]
+EnvironmentFile=-/etc/textbook-proofreading/deepseek.env
 Type=simple
 User=ubuntu
 Group=ubuntu

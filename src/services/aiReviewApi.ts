@@ -2,12 +2,24 @@ import type {
   AiCandidateResolutionStatus,
   AiReviewSummary,
   AiReviewWorkspace,
+  AiRuntimeStatus,
   ModifiedCandidateResult,
 } from '../models/aiReview'
 import { encodePathSegment, requestJson } from './apiClient'
 
 function documentPath(documentId: string) {
   return `/documents/${encodePathSegment(documentId)}`
+}
+
+export function getAiRuntimeStatus() {
+  return requestJson<AiRuntimeStatus>('/ai-runtime/status')
+}
+
+export function runAiReview(documentId: string, chapterId: string, baseRevision: number) {
+  return requestJson<AiReviewWorkspace>(`${reviewPath(documentId, chapterId)}/run`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ baseRevision }),
+  })
 }
 
 function reviewPath(documentId: string, chapterId: string) {

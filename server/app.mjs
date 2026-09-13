@@ -19,6 +19,11 @@ import { NativePdfTextExtractor } from './services/nativePdfTextExtractor.mjs'
 import { DocumentTextService } from './services/documentTextService.mjs'
 import { PdfPageVisualTriage } from './services/pdfPageVisualTriage.mjs'
 import { AuthSessionService, clearedSessionCookie } from './services/authSessionService.mjs'
+import { DeepSeekResponsesClient } from './ai/deepseekResponsesClient.mjs'
+import { ChapterTextBundleBuilder } from './ai/chapterTextBundleBuilder.mjs'
+import { AiReviewRuntimeService } from './ai/aiReviewRuntimeService.mjs'
+import { YuandianMcpClient } from './retrieval/yuandian/client.mjs'
+import { YuandianRetrievalAdapter } from './retrieval/yuandian/adapter.mjs'
 
 const MAX_JSON_BODY = 64 * 1024
 
@@ -110,6 +115,7 @@ async function handleRequest(request, response, services) {
     chapterService,
     proofreadingService,
     aiReviewService,
+    aiReviewRuntimeService,
     documentDeletionService,
     documentTextService,
   } = services
@@ -144,6 +150,12 @@ async function handleRequest(request, response, services) {
 
   if (segments[0] === 'api' && !authSessionService.session(request).authenticated) {
     throw new HttpError(401, 'authentication_required', 'authentication required')
+  }
+
+  if (segments.length === 3 && segments[0] === 'api' && segments[1] === 'ai-runtime' && segments[2] === 'status') {
+    if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    sendJson(response, 200, aiReviewRuntimeService.status())
+    return
   }
 
   if (segments.length === 2 && segments[0] === 'api' && segments[1] === 'documents') {
@@ -198,6 +210,30 @@ async function handleRequest(request, response, services) {
   ) {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
     sendJson(response, 200, await aiReviewService.listSummaries(segments[2]))
+    return
+  }
+
+  if (
+    segments.length === 7 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'chapters' &&
+    segments[5] === 'ai-review' &&
+    segments[6] === 'run'
+  ) {
+    if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    if (!aiReviewRuntimeService.status().configured) {
+      throw new HttpError(503, 'deepseek_unconfigured', 'AI review runtime is not configured')
+    }
+    const body = await readJsonBody(request)
+    const current = await aiReviewService.get(segments[2], segments[4])
+    const workspace = current.stage === 'ai_failed'
+      ? await aiReviewService.retryAiRun(segments[2], segments[4], body.baseRevision)
+      : await aiReviewService.startAiRun(segments[2], segments[4], body.baseRevision)
+    if (!aiReviewRuntimeService.enqueue(segments[2], segments[4])) {
+      throw new HttpError(409, 'ai_review_job_already_queued', 'AI review job is already queued')
+    }
+    sendJson(response, 202, workspace)
     return
   }
 
@@ -448,6 +484,20 @@ export async function createIngestionServer(options = {}) {
     visualTriage: pageVisualTriage,
     lifecycleCoordinator,
   })
+  const modelClient = options.modelClient ?? new DeepSeekResponsesClient(options.deepSeekOptions)
+  const yuandianClient = options.yuandianClient ?? new YuandianMcpClient(options.yuandianOptions)
+  const retrievalAdapter = options.retrievalAdapter ?? new YuandianRetrievalAdapter({ client: yuandianClient })
+  const bundleBuilder = options.bundleBuilder ?? new ChapterTextBundleBuilder({ documentRepository, textRepository })
+  const aiReviewRuntimeService = new AiReviewRuntimeService({
+    aiReviewService,
+    aiReviewRepository,
+    bundleBuilder,
+    modelClient,
+    retrievalAdapter,
+    maxChapterChars: config.aiReviewMaxChapterChars,
+    ...(options.skillLoader ? { skillLoader: options.skillLoader } : {}),
+    ...(options.runtimeLogger ? { logger: options.runtimeLogger } : {}),
+  })
   const documentDeletionService = new DocumentDeletionService({
     documentRepository,
     aiReviewRepository,
@@ -466,6 +516,7 @@ export async function createIngestionServer(options = {}) {
   await proofreadingRepository.init()
   await inspectionService.init()
   await documentTextService.init()
+  await aiReviewRuntimeService.init()
   const uploadService = new UploadSessionService({
     storageRoot: config.storageRoot,
     maxDocumentSize: config.maxDocumentSize,
@@ -484,6 +535,7 @@ export async function createIngestionServer(options = {}) {
     chapterService,
     proofreadingService,
     aiReviewService,
+    aiReviewRuntimeService,
     documentDeletionService,
     documentTextService,
   }
@@ -514,6 +566,7 @@ export async function createIngestionServer(options = {}) {
     chapterService,
     aiReviewRepository,
     aiReviewService,
+    aiReviewRuntimeService,
     proofreadingRepository,
     proofreadingService,
     textRepository,
@@ -525,6 +578,7 @@ export async function createIngestionServer(options = {}) {
     lifecycleCoordinator,
     async close() {
       clearInterval(cleanupTimer)
+      await aiReviewRuntimeService.close()
       if (!server.listening) return
       await new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()))

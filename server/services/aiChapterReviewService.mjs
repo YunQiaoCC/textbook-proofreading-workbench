@@ -240,7 +240,7 @@ export class AiChapterReviewService {
     }, expectedRevision)
   }
 
-  async completeAiRun(documentId, chapterId, candidates, expectedRevision) {
+  async completeAiRun(documentId, chapterId, candidates, expectedRevision, metadata = {}) {
     const { chapter, workspace } = await this.current(documentId, chapterId)
     assertExpectedRevision(workspace, expectedRevision)
     requireStage(workspace, 'ai_running', 'awaiting_human_review')
@@ -258,12 +258,13 @@ export class AiChapterReviewService {
         status: 'completed',
         startedAt: workspace.aiRun.startedAt,
         completedAt: this.now().toISOString(),
+        ...structuredClone(metadata),
       },
       candidates: validatedCandidates,
     }, expectedRevision)
   }
 
-  async failAiRun(documentId, chapterId, errorCode, expectedRevision) {
+  async failAiRun(documentId, chapterId, errorCode, expectedRevision, metadata = {}) {
     const { workspace } = await this.current(documentId, chapterId)
     assertExpectedRevision(workspace, expectedRevision)
     requireStage(workspace, 'ai_running', 'ai_failed')
@@ -278,6 +279,7 @@ export class AiChapterReviewService {
         startedAt: workspace.aiRun.startedAt,
         failedAt: this.now().toISOString(),
         errorCode,
+        ...structuredClone(metadata),
       },
     }, expectedRevision)
   }
