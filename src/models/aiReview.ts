@@ -122,8 +122,11 @@ export interface AiReviewWorkspace {
     completedAt?: string
     failedAt?: string
     errorCode?: string
-    failurePhase?: 'location_gate'
+    failurePhase?: 'location_gate' | 'candidate_validation'
     locationFailureCategory?: 'page_not_found' | 'block_not_found'
+    candidateFailureCategory?: 'schema_invalid' | 'static_retrieval_mismatch' | 'static_verification_mismatch' | 'verify_retrieval_mismatch' | 'verify_not_required' | 'verify_confirmed_without_verified' | 'verified_without_evidence' | 'low_extraction_status_mismatch' | 'low_extraction_confirmed_error' | 'academic_dispute_confirmed_error' | 'version_resolution_not_explicit' | 'stable_id_mismatch' | 'duplicate_candidate_conflict' | 'unknown_candidate_invariant'
+    candidatePolicyNormalizationCount?: number
+    candidatePolicyNormalizationCategories?: string[]
     upstreamErrorCategory?: 'invalid_json_schema' | 'invalid_parameter' | 'context_too_long' | 'authentication' | 'rate_limit' | 'unknown_bad_request'
     upstreamErrorCode?: string
     provider?: 'deepseek'
