@@ -16,16 +16,19 @@ import {
   statuteDetailSelector,
 } from '../server/retrieval/yuandian/adapter.mjs'
 import {
+  canonicalizeLegalTitle,
   classifyYuandianSearchPayload,
   detailRecord,
   mapYuandianSourceType,
   readYuandianPayload,
+  sameLegalTitle,
   searchCandidates,
 } from '../server/retrieval/yuandian/normalize.mjs'
 import { observedFgDetailResponse } from './fixtures/yuandian-fg-detail-observed.mjs'
 import { observedFgSearchResponse } from './fixtures/yuandian-fg-search-observed.mjs'
 import { observedFtDetailResponse } from './fixtures/yuandian-ft-detail-observed.mjs'
 import { observedNotFoundResponse } from './fixtures/yuandian-not-found-observed.mjs'
+import { SYNTHETIC_LEGAL_TITLES } from './fixtures/yuandian-title-identity-synthetic.mjs'
 import { observedVectorSearchResponse } from './fixtures/yuandian-vector-search-observed.mjs'
 
 const SECRET = 'test-secret-must-not-leak'
@@ -620,6 +623,158 @@ test('runtime response metadata records observed paths without historical claims
   assert.equal(articleDetailContract.referDateInputVerifiedAccepted, true)
   assert.equal(articleDetailContract.explicitHistoricalVersionMarkerObserved, false)
   assert.equal(Object.hasOwn(articleDetailContract, 'historicalVersionField'), false)
+})
+
+test('legal title identity accepts exact titles', () => {
+  assert.equal(sameLegalTitle(SYNTHETIC_LEGAL_TITLES.base, SYNTHETIC_LEGAL_TITLES.base), true)
+})
+
+test('legal title canonicalization accepts paired book-title marks', () => {
+  assert.equal(sameLegalTitle(`《${SYNTHETIC_LEGAL_TITLES.base}》`, SYNTHETIC_LEGAL_TITLES.base), true)
+})
+
+test('legal title canonicalization removes meaningless whitespace', () => {
+  assert.equal(sameLegalTitle(' 测试专用 劳动合同法 ', SYNTHETIC_LEGAL_TITLES.base), true)
+})
+
+test('legal title canonicalization normalizes fullwidth punctuation deterministically', () => {
+  const fullwidth = `《${SYNTHETIC_LEGAL_TITLES.base}》（2012年修正）`
+  const halfwidth = `${SYNTHETIC_LEGAL_TITLES.base}(2012年修正)`
+  assert.equal(canonicalizeLegalTitle(fullwidth), canonicalizeLegalTitle(halfwidth))
+  assert.equal(sameLegalTitle(fullwidth, halfwidth), true)
+})
+
+test('observed 2012 revision suffix is equivalent to the base legal title', () => {
+  assert.equal(
+    sameLegalTitle('中华人民共和国劳动合同法(2012修正)', '中华人民共和国劳动合同法'),
+    true,
+  )
+  assert.equal(sameLegalTitle(SYNTHETIC_LEGAL_TITLES.revisedWithYear, SYNTHETIC_LEGAL_TITLES.base), true)
+  assert.equal(sameLegalTitle(SYNTHETIC_LEGAL_TITLES.otherRevision, SYNTHETIC_LEGAL_TITLES.base), true)
+})
+
+test('different explicit revisions are not collapsed', () => {
+  assert.equal(sameLegalTitle(SYNTHETIC_LEGAL_TITLES.revised, SYNTHETIC_LEGAL_TITLES.otherRevision), false)
+})
+
+test('similar but different legal instruments remain strict mismatches', () => {
+  assert.equal(
+    sameLegalTitle('中华人民共和国劳动合同法', '中华人民共和国劳动合同法实施条例'),
+    false,
+  )
+  for (const different of [
+    SYNTHETIC_LEGAL_TITLES.implementingRegulation,
+    SYNTHETIC_LEGAL_TITLES.judicialInterpretation,
+    SYNTHETIC_LEGAL_TITLES.amendment,
+  ]) {
+    assert.equal(sameLegalTitle(SYNTHETIC_LEGAL_TITLES.base, different), false)
+  }
+  assert.equal(sameLegalTitle(SYNTHETIC_LEGAL_TITLES.rules, SYNTHETIC_LEGAL_TITLES.measures), false)
+  assert.equal(sameLegalTitle('测试专用劳动合同', SYNTHETIC_LEGAL_TITLES.base), false)
+})
+
+test('missing legal title never confirms identity', () => {
+  assert.equal(sameLegalTitle(undefined, SYNTHETIC_LEGAL_TITLES.base), false)
+  assert.equal(sameLegalTitle('', SYNTHETIC_LEGAL_TITLES.base), false)
+})
+
+test('observed statute revision title variant normalizes to evidence_found', async () => {
+  const { adapter } = harness([
+    { tool: 'yuandian_rh_fg_search', result: statuteSearch('中华人民共和国劳动合同法', { id: 'FAKE_ID' }) },
+    {
+      tool: 'yuandian_rh_fg_detail',
+      result: observedFgDetailResponse({ fgmc: '中华人民共和国劳动合同法(2012修正)' }),
+    },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-real-statute-title-variant', kind: 'legal_status', text: 'FAKE_STATUS_CLAIM',
+    knownSourceTitle: '中华人民共和国劳动合同法',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.equal(result.warnings.includes('target_not_confirmed'), false)
+})
+
+test('observed article revision title variant normalizes to evidence_found', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: observedFtDetailResponse({
+      fgmc: '中华人民共和国劳动合同法(2012修正)',
+      ft_num: '第三条',
+      title: '中华人民共和国劳动合同法(2012修正)第三条',
+      ftmc: '中华人民共和国劳动合同法(2012修正)第三条',
+    }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-real-article-title-variant', kind: 'article_text', text: 'FAKE_ARTICLE_CLAIM',
+    knownSourceTitle: '中华人民共和国劳动合同法', knownArticleNumber: '第三条',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.equal(result.warnings.includes('target_not_confirmed'), false)
+})
+
+test('provider display title does not override mismatching fgmc identity', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: observedFtDetailResponse({
+      fgmc: SYNTHETIC_LEGAL_TITLES.implementingRegulation,
+      ft_num: '第三条',
+      title: `${SYNTHETIC_LEGAL_TITLES.base}第三条`,
+    }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-fgmc-priority', kind: 'article_text', text: 'FAKE_ARTICLE_CLAIM',
+    knownSourceTitle: SYNTHETIC_LEGAL_TITLES.base, knownArticleNumber: '第三条',
+  })
+  assert.equal(result.status, 'insufficient_evidence')
+  assert.ok(result.warnings.includes('target_not_confirmed'))
+})
+
+test('missing detail title still yields target_not_confirmed', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: observedFtDetailResponse({ fgmc: undefined, title: undefined, ftmc: undefined, ft_num: '第三条' }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-missing-title', kind: 'article_text', text: 'FAKE_ARTICLE_CLAIM',
+    knownSourceTitle: SYNTHETIC_LEGAL_TITLES.base, knownArticleNumber: '第三条',
+  })
+  assert.equal(result.status, 'insufficient_evidence')
+  assert.ok(result.warnings.includes('target_not_confirmed'))
+})
+
+test('article number mismatch remains insufficient after title alignment', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: observedFtDetailResponse({
+      fgmc: '中华人民共和国劳动合同法(2012修正)',
+      ft_num: '第四条',
+    }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-article-number-mismatch', kind: 'article_text', text: 'FAKE_ARTICLE_CLAIM',
+    knownSourceTitle: '中华人民共和国劳动合同法', knownArticleNumber: '第三条',
+  })
+  assert.equal(result.status, 'insufficient_evidence')
+  assert.equal(result.warnings.includes('target_not_confirmed'), false)
+  assert.ok(result.warnings.includes('article_number_not_confirmed'))
+})
+
+test('historical revision title match retains explicit-version limitation', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: observedFtDetailResponse({
+      fgmc: '中华人民共和国劳动合同法(2012修正)',
+      ft_num: '第三条',
+    }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-history-title-variant', kind: 'article_text', text: 'FAKE_HISTORY_CLAIM',
+    knownSourceTitle: '中华人民共和国劳动合同法', knownArticleNumber: '第三条',
+    temporalContext: 'historical', referenceDate: '2010-01-01',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.equal(result.provenance.resolvedVersionDate, null)
+  assert.ok(result.warnings.includes('version_resolution_not_explicit'))
 })
 
 test('known article routes directly to article detail', async () => {

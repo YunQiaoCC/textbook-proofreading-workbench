@@ -32,6 +32,43 @@ function comparable(value) {
   return nonEmpty(value)?.replace(/[《》\s]/gu, '')
 }
 
+const LEGAL_TITLE_WITH_OPTIONAL_REVISION_SUFFIX =
+  /^《([^《》]+)》(?=(?:\((?:18|19|20)\d{2}年?(?:修正|修订)\))?$)/u
+const LEGAL_TITLE_REVISION_SUFFIX = /^(.+)\(((?:18|19|20)\d{2})年?(修正|修订)\)$/u
+
+export function canonicalizeLegalTitle(value) {
+  const raw = nonEmpty(value)
+  if (!raw) return undefined
+  return raw
+    .normalize('NFKC')
+    .replace(/\s+/gu, '')
+    .replace(LEGAL_TITLE_WITH_OPTIONAL_REVISION_SUFFIX, '$1')
+}
+
+function legalTitleParts(value) {
+  const canonical = canonicalizeLegalTitle(value)
+  if (!canonical) return undefined
+  const match = LEGAL_TITLE_REVISION_SUFFIX.exec(canonical)
+  if (!match) return { canonical, base: canonical, revisionSuffix: undefined }
+  return {
+    canonical,
+    base: match[1],
+    revisionSuffix: { year: match[2], kind: match[3] },
+  }
+}
+
+export function sameLegalTitle(left, right) {
+  const leftParts = legalTitleParts(left)
+  const rightParts = legalTitleParts(right)
+  if (!leftParts || !rightParts) return false
+  if (leftParts.canonical === rightParts.canonical) return true
+  if (leftParts.base !== rightParts.base) return false
+  // A base title may identify the same instrument as one explicitly carrying
+  // the observed revision suffix. Two different explicit revisions are not
+  // collapsed because version identity remains independently significant.
+  return Boolean(leftParts.revisionSuffix) !== Boolean(rightParts.revisionSuffix)
+}
+
 export function mapYuandianSourceType(rawAuthorityLevel) {
   const raw = nonEmpty(rawAuthorityLevel)
   const sourceType = SOURCE_TYPE_MAP.get(raw) ?? 'other'
@@ -242,7 +279,7 @@ export function normalizeYuandianDetail({ claim, record, searchCandidate, provid
   const historicalRequest = isHistoricalClaim(claim)
   let sufficient = true
 
-  if (!title || (claim.knownSourceTitle && comparable(title) !== comparable(claim.knownSourceTitle))) {
+  if (!title || (claim.knownSourceTitle && !sameLegalTitle(title, claim.knownSourceTitle))) {
     warnings.push('target_not_confirmed')
     sufficient = false
   }
