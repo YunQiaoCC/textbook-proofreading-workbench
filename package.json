@@ -20,6 +20,7 @@
     "test:legal-skill": "node scripts/validate-legal-proofreading-skill.mjs",
     "test:ai-review-workflow": "node scripts/test-ai-review-workflow.mjs",
     "test:workflow-rollback": "node scripts/test-workflow-rollback.mjs",
+    "test:ai-candidate-overlays": "node scripts/test-ai-candidate-overlays.mjs",
     "test:chapter-delete": "node scripts/test-chapter-delete.mjs",
     "test:yuandian-retrieval": "node scripts/test-yuandian-retrieval.mjs",
     "test:auth": "node scripts/test-auth.mjs",

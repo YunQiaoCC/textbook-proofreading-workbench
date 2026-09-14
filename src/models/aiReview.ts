@@ -110,6 +110,23 @@ export interface AiCandidateEntry {
   resolution: AiCandidateResolution
 }
 
+export interface AiCandidateOverlayGeometry {
+  candidateId: string
+  pdfPage: number
+  blockId: string
+  bbox: { x: number; y: number; width: number; height: number }
+  page: { width: number; height: number; unit: 'pt'; origin: 'top-left' }
+  resolutionStatus: AiCandidateResolutionStatus
+}
+
+export interface AiCandidateOverlay extends Omit<AiCandidateOverlayGeometry, 'resolutionStatus'> {
+  id: `ai-overlay:${string}`
+  resolutionStatus: Exclude<AiCandidateResolutionStatus, 'rejected'>
+  issueType: AiIssueType
+  severity: AiCandidate['severity']
+  readOnly: true
+}
+
 export interface AiReviewWorkspace {
   schemaVersion: 1
   documentId: string

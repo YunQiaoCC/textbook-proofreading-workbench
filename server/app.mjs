@@ -11,6 +11,7 @@ import { PopplerInspectionService } from './services/popplerInspection.mjs'
 import { DocumentReadService } from './services/documentReadService.mjs'
 import { ChapterService } from './services/chapterService.mjs'
 import { AiChapterReviewService } from './services/aiChapterReviewService.mjs'
+import { AiCandidateOverlayService } from './services/aiCandidateOverlayService.mjs'
 import { MAX_PROOFREADING_BODY_BYTES, ProofreadingService } from './services/proofreadingService.mjs'
 import { HttpError, UploadSessionService } from './services/uploadSessionService.mjs'
 import { DocumentLifecycleCoordinator } from './services/documentLifecycleCoordinator.mjs'
@@ -116,6 +117,7 @@ async function handleRequest(request, response, services) {
     chapterService,
     proofreadingService,
     aiReviewService,
+    aiCandidateOverlayService,
     aiReviewRuntimeService,
     documentDeletionService,
     chapterDeletionService,
@@ -212,6 +214,19 @@ async function handleRequest(request, response, services) {
   ) {
     if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
     sendJson(response, 200, await aiReviewService.listSummaries(segments[2]))
+    return
+  }
+
+  if (
+    segments.length === 7 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'chapters' &&
+    segments[5] === 'ai-review' &&
+    segments[6] === 'overlays'
+  ) {
+    if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    sendJson(response, 200, await aiCandidateOverlayService.list(segments[2], segments[4]))
     return
   }
 
@@ -499,6 +514,7 @@ export async function createIngestionServer(options = {}) {
   const chapterService = new ChapterService({ documentRepository })
   const proofreadingService = new ProofreadingService({ documentRepository, proofreadingRepository })
   const aiReviewService = new AiChapterReviewService({ documentRepository, aiReviewRepository })
+  const aiCandidateOverlayService = new AiCandidateOverlayService({ aiReviewService, textRepository })
   const nativeTextExtractor = options.nativeTextExtractor ?? new NativePdfTextExtractor({
     pdftotextBin: options.pdftotextBin,
     timeoutMs: options.textExtractionPageTimeoutMs,
@@ -571,6 +587,7 @@ export async function createIngestionServer(options = {}) {
     chapterService,
     proofreadingService,
     aiReviewService,
+    aiCandidateOverlayService,
     aiReviewRuntimeService,
     documentDeletionService,
     chapterDeletionService,
@@ -603,6 +620,7 @@ export async function createIngestionServer(options = {}) {
     chapterService,
     aiReviewRepository,
     aiReviewService,
+    aiCandidateOverlayService,
     aiReviewRuntimeService,
     proofreadingRepository,
     proofreadingService,

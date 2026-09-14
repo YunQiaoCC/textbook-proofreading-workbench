@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { aiCandidateResolutionLabelMap, aiIssueTypeLabelMap } from '../models/aiReview'
 import { categoryLabelMap } from '../models/proofreading'
 import type { ReviewQueueItem } from '../models/reviewQueue'
@@ -8,6 +8,7 @@ const props = defineProps<{ items: ReviewQueueItem[]; selectedKey: string | null
 const emit = defineEmits<{ select: [key: string]; create: [] }>()
 const query = ref('')
 const activeFilter = ref<'all' | 'ai' | 'human'>('all')
+const issueScroll = ref<HTMLElement | null>(null)
 
 const filteredItems = computed(() => {
   const normalizedQuery = query.value.trim().toLowerCase()
@@ -24,6 +25,14 @@ const filteredItems = computed(() => {
 function preview(item: ReviewQueueItem) {
   return item.source === 'ai' ? item.entry.candidate.originalText : item.issue.originalText || '未填写原文，点击编辑意见'
 }
+
+watch(() => props.selectedKey, async (selectedKey) => {
+  if (!selectedKey) return
+  await nextTick()
+  const selected = [...(issueScroll.value?.querySelectorAll<HTMLElement>('[data-queue-key]') ?? [])]
+    .find((element) => element.dataset.queueKey === selectedKey)
+  selected?.scrollIntoView({ block: 'nearest' })
+})
 </script>
 
 <template>
@@ -40,8 +49,8 @@ function preview(item: ReviewQueueItem) {
         <button :class="{ active: activeFilter === 'human' }" type="button" @click="activeFilter = 'human'">人工补充</button>
       </div>
     </div>
-    <div class="issue-scroll">
-      <button v-for="(item, index) in filteredItems" :key="item.key" class="issue-card" :class="[{ selected: selectedKey === item.key }, `source-${item.source}`]" type="button" @click="emit('select', item.key)">
+    <div ref="issueScroll" class="issue-scroll">
+      <button v-for="(item, index) in filteredItems" :key="item.key" :data-queue-key="item.key" class="issue-card" :class="[{ selected: selectedKey === item.key }, `source-${item.source}`]" type="button" @click="emit('select', item.key)">
         <div class="issue-card-top">
           <span class="issue-number">#{{ String(index + 1).padStart(2, '0') }}</span>
           <span class="source-badge" :class="item.source">{{ item.source === 'ai' ? '✦ AI 初校' : '👤 人工补充' }}</span>

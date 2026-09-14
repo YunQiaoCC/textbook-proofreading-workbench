@@ -1,5 +1,6 @@
 import type {
   AiCandidateResolutionStatus,
+  AiCandidateOverlayGeometry,
   AiReviewSummary,
   AiReviewWorkspace,
   AiRuntimeStatus,
@@ -28,6 +29,10 @@ function reviewPath(documentId: string, chapterId: string) {
 
 export function getAiReviewWorkspace(documentId: string, chapterId: string) {
   return requestJson<AiReviewWorkspace>(reviewPath(documentId, chapterId))
+}
+
+export function getAiCandidateOverlayGeometry(documentId: string, chapterId: string) {
+  return requestJson<{ overlays: AiCandidateOverlayGeometry[] }>(`${reviewPath(documentId, chapterId)}/overlays`)
 }
 
 export function getAiReviewSummaries(documentId: string) {
