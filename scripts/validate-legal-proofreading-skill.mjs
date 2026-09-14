@@ -257,12 +257,59 @@ if (
   fail('19-genuine-visible-publisher-typo: genuine visible typo must remain eligible for static confirmed_error')
 }
 const uncertainGlyph = goldenById.get('20-uncertain-glyph-mapping')?.expected
-if (uncertainGlyph?.issueExpected && (
-  uncertainGlyph.expectedIssue?.judgement === 'confirmed_error' ||
-  uncertainGlyph.expectedIssue?.confidence === 'high' ||
-  uncertainGlyph.expectedIssue?.verificationStatus !== 'manual_check_required'
-)) {
-  fail('20-uncertain-glyph-mapping: uncertain glyph cannot be high-confidence confirmed_error')
+if (uncertainGlyph?.issueExpected !== false) {
+  fail('20-uncertain-glyph-mapping: extraction-artifact-only glyph suspicion must emit no issue')
+}
+
+const recallRebalanceCaseIds = [
+  '21-unicode-artifact-only-no-rendered',
+  '22-dash-anomaly-manual-review',
+  '23-duplicate-text-manual-review',
+  '24-repeated-punctuation-manual-review',
+  '25-normalization-equivalent-artifact-only',
+  '26-normal-language-negative',
+]
+for (const caseId of recallRebalanceCaseIds) {
+  if (!caseById.has(caseId) || !goldenById.has(caseId)) fail(`missing recall-rebalance regression ${caseId}`)
+}
+
+for (const caseId of ['21-unicode-artifact-only-no-rendered', '25-normalization-equivalent-artifact-only']) {
+  if (goldenById.get(caseId)?.expected?.issueExpected !== false) {
+    fail(`${caseId}: extraction-artifact-only suspicion must emit no issue`)
+  }
+}
+
+const normalizationOnlyCase = caseById.get('25-normalization-equivalent-artifact-only')
+if (
+  normalizationOnlyCase &&
+  normalizationOnlyCase.input?.text.normalize('NFKC') !== normalizationOnlyCase.context?.normalizedReferenceText.normalize('NFKC')
+) {
+  fail('25-normalization-equivalent-artifact-only: fixture must be NFKC-equivalent')
+}
+
+function assertManualReviewRecall(caseId, expectedIssueType) {
+  const expected = goldenById.get(caseId)?.expected
+  const issue = expected?.expectedIssue
+  if (expected?.issueExpected !== true) fail(`${caseId}: actionable anomaly must emit a finding`)
+  if (
+    issue?.issueType !== expectedIssueType ||
+    issue?.ruleType !== 'static' ||
+    issue?.verificationStatus !== 'manual_check_required' ||
+    issue?.retrievalRequired !== 'no' ||
+    issue?.judgement === 'confirmed_error' ||
+    issue?.confidence === 'high' ||
+    issue?.humanReviewNote !== '需回看 PDF 页面确认，可能存在文本提取或版面映射影响。'
+  ) {
+    fail(`${caseId}: actionable visual uncertainty must remain conservative and require manual review`)
+  }
+}
+
+assertManualReviewRecall('22-dash-anomaly-manual-review', 'punctuation')
+assertManualReviewRecall('23-duplicate-text-manual-review', 'wording')
+assertManualReviewRecall('24-repeated-punctuation-manual-review', 'punctuation')
+
+if (goldenById.get('26-normal-language-negative')?.expected?.issueExpected !== false) {
+  fail('26-normal-language-negative: ordinary correct text must emit no issue')
 }
 
 if (failures.length > 0) {
@@ -276,5 +323,10 @@ if (failures.length > 0) {
   console.log('Skill lint: PASS')
   console.log(`Eval cases: ${cases.length} (${positiveCount} positive, ${negativeCount} negative controls, ${adversarialCount} adversarial)`)
   console.log(`Stable issue IDs: ${stableIds.size} unique and deterministic`)
+  console.log('EXTRACTION_FALSE_POSITIVE_GUARD=PASS')
+  console.log('ACTIONABLE_PUNCTUATION_RECALL=PASS')
+  console.log('DASH_ANOMALY_RECALL=PASS')
+  console.log('DUPLICATE_TEXT_RECALL=PASS')
+  console.log('NORMAL_TEXT_NO_ISSUE=PASS')
   console.log('External calls: none')
 }

@@ -412,6 +412,108 @@
     "caseId": "20-uncertain-glyph-mapping",
     "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
     "forbidden": { "forbiddenJudgements": ["confirmed_error"], "confidence": ["high"] }
+  },
+  {
+    "caseId": "21-unicode-artifact-only-no-rendered",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["typo", "terminology_inconsistency"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "22-dash-anomaly-manual-review",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_f75afe54885d383c",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-14",
+        "pdfPage": 207,
+        "blockId": "blk-207-03",
+        "originalText": "劳动法的调整对象一一劳动关系，具有特定的社会属性。",
+        "issueType": "punctuation",
+        "ruleType": "static",
+        "severity": "minor",
+        "extractionReliability": "low",
+        "verificationStatus": "manual_check_required",
+        "retrievalRequired": "no",
+        "evidence": [],
+        "judgement": "likely_error",
+        "suggestion": "回看 PDF 页面，确认“一一”是否应为破折号，并按页面实际字形处理。",
+        "reason": "连续“一一”处于插入说明位置，构成具体且可定位的破折号疑点，但文本提取不足以证明页面字形。",
+        "confidence": "medium",
+        "humanReviewNote": "需回看 PDF 页面确认，可能存在文本提取或版面映射影响。",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified", "not_required"], "forbiddenJudgements": ["confirmed_error"], "confidence": ["high"] }
+  },
+  {
+    "caseId": "23-duplicate-text-manual-review",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_46c6cf430cba984b",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-14",
+        "pdfPage": 208,
+        "blockId": "blk-208-02",
+        "originalText": "劳动劳动关系是劳动法的主要调整对象。",
+        "issueType": "wording",
+        "ruleType": "static",
+        "severity": "minor",
+        "extractionReliability": "low",
+        "verificationStatus": "manual_check_required",
+        "retrievalRequired": "no",
+        "evidence": [],
+        "judgement": "likely_error",
+        "suggestion": "回看 PDF 页面，确认是否重复排入“劳动”二字。",
+        "reason": "连续重复的“劳动”构成具体且可定位的文字重复疑点，值得人工核查。",
+        "confidence": "medium",
+        "humanReviewNote": "需回看 PDF 页面确认，可能存在文本提取或版面映射影响。",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified", "not_required"], "forbiddenJudgements": ["confirmed_error"], "confidence": ["high"] }
+  },
+  {
+    "caseId": "24-repeated-punctuation-manual-review",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_81afa5b391179f6d",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-14",
+        "pdfPage": 209,
+        "blockId": "blk-209-04",
+        "originalText": "因此，，劳动法具有重要的社会功能。",
+        "issueType": "punctuation",
+        "ruleType": "static",
+        "severity": "minor",
+        "extractionReliability": "low",
+        "verificationStatus": "manual_check_required",
+        "retrievalRequired": "no",
+        "evidence": [],
+        "judgement": "likely_error",
+        "suggestion": "回看 PDF 页面，确认并删除重复的逗号。",
+        "reason": "连续两个逗号构成具体且可定位的标点重复疑点，值得人工核查。",
+        "confidence": "medium",
+        "humanReviewNote": "需回看 PDF 页面确认，可能存在文本提取或版面映射影响。",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified", "not_required"], "forbiddenJudgements": ["confirmed_error"], "confidence": ["high"] }
+  },
+  {
+    "caseId": "25-normalization-equivalent-artifact-only",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["typo", "terminology_inconsistency"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "26-normal-language-negative",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["typo", "punctuation", "wording", "format"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
   }
 ]
 

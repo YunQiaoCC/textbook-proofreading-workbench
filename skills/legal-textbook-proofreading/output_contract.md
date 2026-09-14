@@ -17,7 +17,9 @@ Emit a candidate only when it is:
 
 Do not emit praise, correct items, purely aesthetic formatting preferences, or speculative alternatives with no material effect on legal accuracy or reader understanding. `format` is reportable only when it affects meaning, legal expression, reliable location, or ordinary publication correctness.
 
-Do not emit a Candidate whose only defect is a hidden text-layer Unicode distinction not visibly established on the published page. When publication error and extraction artifact cannot be distinguished, prefer no issue; if a manual check is genuinely actionable, encode that uncertainty using existing v0.1 fields. This clarifies emission behavior and does not change the Candidate schema. Preserve extracted `originalText`; Unicode normalization is only a judgement safeguard.
+Do not emit a Candidate whose only asserted defect is a likely extraction-layer artifact, such as a hidden text-layer Unicode distinction, normalization-equivalent or compatibility character, homoglyph/variant code point, font/ToUnicode mapping issue, or OCR/glyph-mapping artifact, when no independent textual or editorial reason suggests a publication problem.
+
+Missing rendered-page evidence alone does not suppress a concrete, locatable, plausible, and actionable language-mechanics anomaly. Such a Candidate may be retained for human visual review, but it must not claim `verified` or use `confirmed_error` solely from extracted text; use low/medium confidence, `manual_check_required` when permitted by the existing contract, and an explicit `humanReviewNote`. Preserve extracted `originalText`; Unicode normalization is only a judgement safeguard.
 
 ## Required fields
 

@@ -10,9 +10,11 @@ The passes below are review dimensions, not a required number of model calls. On
 
 ### Pass A: Language mechanics
 
-Check typos, punctuation, wording, and obvious repetition. Emit only clear publication issues: a “clear typo” must be reasonably established in reliable input as a defect in the visible published text itself. Stylistic preference alone is insufficient.
+Check typos, punctuation, wording, obvious repetition, spacing, dash or hyphen substitution, numbering, and meaning-affecting textual formatting. The screening threshold favors actionable recall over silent suppression when human review can cheaply resolve uncertainty. Emit only when the anomaly is concrete, locatable, a plausible editorial defect, and actionable for human review; do not flood the reviewer with stylistic preferences or speculative alternatives.
 
-Do not make a static `confirmed_error` from extracted text alone when visually identical or similar characters differ only by code point, Unicode normalization removes the difference, a CJK character may be a compatibility/variant/homoglyph, font encoding or ToUnicode mapping is suspect, or the extracted text conflicts with the rendered page. The same safeguard applies to suspicious punctuation and spacing that extraction may have introduced.
+Rendered-page evidence is not required merely to retain a Stage 1 finding. An extracted sequence such as a likely dash rendered as “一一”, consecutive abnormal punctuation, a clearly missing or extra punctuation mark, abnormal spacing, repeated words, numbering discontinuity, or an obvious word-form anomaly may be retained for manual review. Without visual confirmation, describe the uncertainty, keep confidence at `medium` or `low`, and do not use `confirmed_error` solely from extracted text.
+
+Suppress the finding when it rests only on a likely extraction-layer artifact: visually equivalent or similar code points, NFC/NFKC-equivalent text, compatibility characters, variant characters or homoglyphs, font or ToUnicode mapping, OCR or glyph mapping, or a hidden-text-layer difference, with no independent textual or editorial reason to suspect the published page.
 
 ### Pass B: Terminology and internal consistency
 
@@ -95,9 +97,11 @@ Do not default an unstated jurisdiction to nationwide application. A local, fore
 
 A source-layer defect is not necessarily a publication-layer defect. If extracted text is anomalous but the rendered PDF page is visually normal, it is not a textbook proofreading error and v0.1 must not add it to the final proofreading table. Extraction diagnostics are outside this skill's candidate output.
 
-If a typo, wrong character, variant-character inconsistency, homoglyph/Unicode inconsistency, punctuation issue, or spacing issue depends on visual form and rendered-page evidence is unavailable, never use `confirmed_error` with `high` confidence. Prefer no issue. Emit a conservative candidate only when it has real human value, using `ambiguous` or `likely_error`, low/medium confidence, `manual_check_required`, and a note such as “需回看 PDF 页面确认，可能为文本提取/字符映射异常。”
+Distinguish two cases. A suspicion supported solely by a likely extraction artifact, with no independent editorial signal, is not an issue. A concrete and actionable editorial anomaly whose visual status is unresolved may be retained for human review. In the latter case, use `ambiguous` or `likely_error`, low/medium confidence, `manual_check_required` when allowed by the existing contract, and the note “需回看 PDF 页面确认，可能存在文本提取或版面映射影响。” Never use `confirmed_error` or claim `verified` solely from extracted text.
 
 For publisher names, author names, law names, and institution names, a single suspicious extracted code point is not proof that the formal name is misspelled. Use visual/manual checking, or authoritative retrieval when string identity itself requires confirmation; do not default to a static confirmed error.
+
+This language-mechanics recall rule does not relax retrieval or evidence requirements for legal-source identity, statutory wording, case law, historical validity, jurisdiction, or academic dispute.
 
 ## Issue threshold
 
