@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 export const DEEPSEEK_PROVIDER = 'deepseek'
 export const DEFAULT_DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 export const DEFAULT_DEEPSEEK_MODEL = 'deepseek-v4-flash'
@@ -21,7 +23,9 @@ const UPSTREAM_ERROR_CATEGORIES = new Set([
   'rate_limit',
   'unknown_bad_request',
 ])
+const OUTPUT_INVALID_CATEGORIES = new Set(['missing_output_text', 'invalid_json'])
 const SAFE_UPSTREAM_CODE = /^[A-Za-z0-9_.-]{1,80}$/u
+const SAFE_OUTPUT_TYPE = /^[A-Za-z0-9_.-]{1,80}$/u
 
 function cleanBaseUrl(value) {
   const url = new URL(value)
@@ -37,11 +41,24 @@ function positiveInteger(value, fallback) {
 }
 
 export class DeepSeekProviderError extends Error {
-  constructor(code, { status, usage, durationMs, upstreamErrorCategory, upstreamErrorCode } = {}) {
+  constructor(code, {
+    status,
+    responseStatus,
+    usage,
+    durationMs,
+    upstreamErrorCategory,
+    upstreamErrorCode,
+    outputInvalidCategory,
+    outputItemTypes,
+    contentTypes,
+    outputTextLength,
+    outputTextSha256,
+  } = {}) {
     super(code)
     this.name = 'DeepSeekProviderError'
     this.code = ERROR_CODES.has(code) ? code : 'deepseek_provider_error'
     this.status = status
+    this.responseStatus = Number.isInteger(responseStatus) ? responseStatus : undefined
     this.usage = usage
     this.durationMs = durationMs
     this.upstreamErrorCategory = UPSTREAM_ERROR_CATEGORIES.has(upstreamErrorCategory)
@@ -50,7 +67,23 @@ export class DeepSeekProviderError extends Error {
     this.upstreamErrorCode = SAFE_UPSTREAM_CODE.test(upstreamErrorCode ?? '')
       ? upstreamErrorCode
       : undefined
+    this.outputInvalidCategory = OUTPUT_INVALID_CATEGORIES.has(outputInvalidCategory)
+      ? outputInvalidCategory
+      : undefined
+    this.outputItemTypes = safeOutputTypes(outputItemTypes)
+    this.contentTypes = safeOutputTypes(contentTypes)
+    this.outputTextLength = Number.isSafeInteger(outputTextLength) && outputTextLength >= 0
+      ? outputTextLength
+      : undefined
+    this.outputTextSha256 = /^[a-f0-9]{64}$/u.test(outputTextSha256 ?? '')
+      ? outputTextSha256
+      : undefined
   }
+}
+
+function safeOutputTypes(values) {
+  if (!Array.isArray(values)) return undefined
+  return [...new Set(values.filter((value) => typeof value === 'string' && SAFE_OUTPUT_TYPE.test(value)))].sort()
 }
 
 class DeepSeekConfig {
@@ -113,6 +146,22 @@ function outputText(response) {
     }
   }
   return typeof response?.output_text === 'string' ? response.output_text : null
+}
+
+function safeOutputMetadata(response, text) {
+  const output = Array.isArray(response?.output) ? response.output : []
+  const outputItemTypes = output.map((item) => item?.type)
+  const contentTypes = output.flatMap((item) => (
+    Array.isArray(item?.content) ? item.content.map((content) => content?.type) : []
+  ))
+  return {
+    outputItemTypes,
+    contentTypes,
+    ...(typeof text === 'string' ? {
+      outputTextLength: text.length,
+      outputTextSha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+    } : {}),
+  }
 }
 
 function statusError(status) {
@@ -211,12 +260,28 @@ export class DeepSeekResponsesClient {
       throw new DeepSeekProviderError('deepseek_bad_response', { status: response.status, usage, durationMs })
     }
     const text = outputText(payload)
-    if (!text) throw new DeepSeekProviderError('deepseek_output_invalid', { status: response.status, usage, durationMs })
+    if (text === null) {
+      throw new DeepSeekProviderError('deepseek_output_invalid', {
+        status: response.status,
+        responseStatus: response.status,
+        usage,
+        durationMs,
+        outputInvalidCategory: 'missing_output_text',
+        ...safeOutputMetadata(payload, text),
+      })
+    }
     let data
     try {
       data = JSON.parse(text)
     } catch {
-      throw new DeepSeekProviderError('deepseek_output_invalid', { status: response.status, usage, durationMs })
+      throw new DeepSeekProviderError('deepseek_output_invalid', {
+        status: response.status,
+        responseStatus: response.status,
+        usage,
+        durationMs,
+        outputInvalidCategory: 'invalid_json',
+        ...safeOutputMetadata(payload, text),
+      })
     }
     return { data, usage, durationMs }
   }

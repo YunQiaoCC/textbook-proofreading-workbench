@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { strict as assert } from 'node:assert'
+import { createHash } from 'node:crypto'
 import { createDeepSeekConfig, DeepSeekProviderError, DeepSeekResponsesClient } from '../server/ai/deepseekResponsesClient.mjs'
 
 let count = 0
@@ -71,11 +72,72 @@ await expectCode('http-429-sanitized', { ok: false, status: 429 }, 'deepseek_rat
 await expectCode('http-5xx-sanitized', { ok: false, status: 503 }, 'deepseek_provider_error')
 await expectCode('incomplete-rejected', { ok: true, status: 200, async json() { return { status: 'incomplete', output: [], usage: {} } } }, 'deepseek_output_incomplete')
 await expectCode('failed-rejected', { ok: true, status: 200, async json() { return { status: 'failed', output: [] } } }, 'deepseek_provider_error')
-await expectCode('malformed-json-output-rejected', { ok: true, status: 200, async json() { return { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: '{bad' }] }] } } }, 'deepseek_output_invalid')
+await test('completed-without-output-text-is-safely-categorized', async () => {
+  const response = {
+    ok: true,
+    status: 200,
+    async json() {
+      return {
+        status: 'completed',
+        output: [
+          { type: 'reasoning', summary: [{ text: 'PRIVATE REASONING MUST NOT ESCAPE' }] },
+          { type: 'message', content: [{ type: 'refusal', text: 'PRIVATE CONTENT MUST NOT ESCAPE' }] },
+          { type: 'unsafe type containing provider text', content: [] },
+        ],
+        usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
+      }
+    },
+  }
+  await assert.rejects(
+    new DeepSeekResponsesClient({ apiKey: 'sensitive', fetch: async () => response }).requestStructured({ instructions: '', input: '', schema, schemaName: 'x', reasoningEffort: 'low', maxOutputTokens: 1 }),
+    (error) => {
+      assert.equal(error.code, 'deepseek_output_invalid')
+      assert.equal(error.outputInvalidCategory, 'missing_output_text')
+      assert.equal(error.responseStatus, 200)
+      assert.deepEqual(error.outputItemTypes, ['message', 'reasoning'])
+      assert.deepEqual(error.contentTypes, ['refusal'])
+      assert.equal(error.outputTextLength, undefined)
+      assert.equal(error.outputTextSha256, undefined)
+      const serialized = JSON.stringify(error)
+      assert.equal(serialized.includes('PRIVATE REASONING'), false)
+      assert.equal(serialized.includes('PRIVATE CONTENT'), false)
+      assert.equal(serialized.includes('unsafe type containing provider text'), false)
+      return true
+    },
+  )
+})
+await test('malformed-json-output-is-safely-categorized', async () => {
+  const malformed = '{bad PRIVATE OUTPUT MUST NOT ESCAPE'
+  const response = {
+    ok: true,
+    status: 200,
+    async json() {
+      return {
+        status: 'completed',
+        output: [{ type: 'message', content: [{ type: 'output_text', text: malformed }] }],
+        usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
+      }
+    },
+  }
+  await assert.rejects(
+    new DeepSeekResponsesClient({ apiKey: 'sensitive', fetch: async () => response }).requestStructured({ instructions: '', input: '', schema, schemaName: 'x', reasoningEffort: 'low', maxOutputTokens: 1 }),
+    (error) => {
+      assert.equal(error.code, 'deepseek_output_invalid')
+      assert.equal(error.outputInvalidCategory, 'invalid_json')
+      assert.equal(error.responseStatus, 200)
+      assert.deepEqual(error.outputItemTypes, ['message'])
+      assert.deepEqual(error.contentTypes, ['output_text'])
+      assert.equal(error.outputTextLength, malformed.length)
+      assert.equal(error.outputTextSha256, createHash('sha256').update(malformed, 'utf8').digest('hex'))
+      assert.equal(JSON.stringify(error).includes(malformed), false)
+      return true
+    },
+  )
+})
 await expectCode('malformed-http-json-rejected', { ok: true, status: 200, async json() { throw new Error('bad') } }, 'deepseek_bad_response')
 await test('timeout-sanitized', async () => {
   const timeoutClient = new DeepSeekResponsesClient({ apiKey: 'x', timeoutMs: 5, fetch: async (_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))) })
   await assert.rejects(timeoutClient.requestStructured({ instructions: '', input: '', schema, schemaName: 'x', reasoningEffort: 'low', maxOutputTokens: 1 }), (error) => error.code === 'deepseek_timeout')
 })
-assert.equal(count, 24)
+assert.equal(count, 25)
 console.log(`deepseek-client-test-count=${count}`)
