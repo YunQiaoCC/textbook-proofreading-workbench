@@ -15,6 +15,7 @@ const props = defineProps<{
   chapterError: string
   collapsed: boolean
   deletingDocumentId: string | null
+  deletingChapterId: string | null
   deleteError: string
   textSummary: DocumentTextJob | null
   textError: string
@@ -27,6 +28,7 @@ const emit = defineEmits<{
   createChapter: [payload: ChapterInput, onSuccess: () => void]
   updateChapter: [chapterId: string, payload: ChapterInput, onSuccess: () => void]
   deleteDocument: [documentId: string]
+  deleteChapter: [chapter: ApiChapter]
   extractText: []
 }>()
 
@@ -232,7 +234,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onGlobalKeydown))
             </span>
             <span class="chapter-progress">{{ aiReviewStageLabelMap[chapterReviewStage(chapter.id)] }}</span>
           </button>
-          <button class="chapter-edit" type="button" aria-label="编辑章节" @click.stop="openEdit(chapter)">编辑</button>
+          <div class="chapter-actions">
+            <button class="chapter-edit" type="button" aria-label="编辑章节" :disabled="Boolean(deletingChapterId)" @click.stop="openEdit(chapter)">编辑</button>
+            <button class="chapter-delete" type="button" aria-label="删除章节" :disabled="Boolean(deletingChapterId)" @click.stop="emit('deleteChapter', chapter)">{{ deletingChapterId === chapter.id ? '删除中…' : '删除' }}</button>
+          </div>
         </div>
       </div>
       <div v-else class="chapter-empty">章节信息待建立</div>
@@ -327,9 +332,12 @@ h2 { margin: 4px 0 0; color: #253047; font-size: 17px; }
 .chapter-row.active .chapter-copy strong { color: #28456e; }
 .chapter-copy span, .chapter-progress { margin-top: 3px; color: #9aa4b3; font-size: 9px; }
 .chapter-progress { white-space: nowrap; }
-.chapter-edit { align-self: stretch; padding: 0 3px; color: #8e9aab; font-size: 9px; background: transparent; border: 0; opacity: 0; }
-.chapter-item:hover .chapter-edit, .chapter-edit:focus { opacity: 1; }
+.chapter-actions { display: flex; flex-direction: column; align-self: stretch; justify-content: center; gap: 1px; }
+.chapter-edit, .chapter-delete { padding: 2px 3px; color: #8e9aab; font-size: 9px; background: transparent; border: 0; opacity: 0; }
+.chapter-item:hover .chapter-edit, .chapter-item:hover .chapter-delete, .chapter-edit:focus, .chapter-delete:focus { opacity: 1; }
 .chapter-edit:hover { color: #49698f; }
+.chapter-delete:hover { color: #8f5c64; }
+.chapter-edit:disabled, .chapter-delete:disabled { cursor: wait; opacity: .35; }
 .chapter-empty { padding: 15px 8px; color: #a1aab7; font-size: 10px; text-align: center; background: #f3f5f8; border: 1px dashed #dce2ea; border-radius: 6px; }
 .chapter-setup-button { width: 100%; margin-top: 8px; padding: 7px; color: #49698f; font-size: 10px; background: #f1f5fa; border: 1px solid #d8e2ee; border-radius: 6px; }
 .chapter-setup-button:hover { background: #e7eef8; }

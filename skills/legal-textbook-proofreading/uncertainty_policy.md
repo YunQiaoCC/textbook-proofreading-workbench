@@ -14,6 +14,7 @@ Represent uncertainty explicitly. Evidence gaps must lower the strength of the j
 6. An unclear temporal frame must not be evaluated automatically under current law. Determine whether the discussion is current, historical, or mixed.
 7. Unknown case status must not be amplified. Distinguish ordinary, official/typical, guiding, and other special status only from reliable evidence.
 8. Never invent legal text, article or docket numbers, dates, cases, sources, authors, page numbers, jurisdictions, or verification activity.
+9. The visible published page is authoritative for glyph-level proofreading. Extracted code-point differences alone cannot establish a textbook typo when font encoding, ToUnicode, compatibility characters, homoglyphs, OCR, normalization, or glyph mapping may explain them.
 
 ## Extraction reliability
 
@@ -22,6 +23,8 @@ Represent uncertainty explicitly. Evidence gaps must lower the strength of the j
 - `low`: extraction, OCR, or page mapping prevents reliable reading. Do not strongly adjudicate the passage in v0.1.
 
 Extraction reliability concerns the input and location. `confidence` concerns the legal or language judgement. Never merge them: a clearly extracted sentence may still present a low-confidence legal question, while a seemingly obvious typo in badly extracted text may require manual checking.
+
+`high` extraction reliability means the text and location are generally usable; it does not prove that every extracted Unicode code point exactly represents the visible glyph. A difference that disappears under NFC or NFKC is not by itself evidence of a publication typo, and normalization must not overwrite authoritative extracted `originalText`.
 
 ## Choosing a judgement
 
@@ -36,3 +39,5 @@ Extraction reliability concerns the input and location. `confidence` concerns th
 ## Escalation to human review
 
 Use `humanReviewNote` for a concise, actionable limitation. Every candidate begins with `humanResolution: pending`; the model does not accept its own candidate. When uncertainty prevents a useful, locatable recommendation, do not emit an issue at all.
+
+For a visual character, punctuation, or spacing suspicion without rendered-page evidence, prefer no issue. If human review would still be actionable, use `manual_check_required`, `ambiguous` or `likely_error`, low/medium confidence, and explicitly flag the possible extraction or character-mapping artifact. Never combine `confirmed_error` with `high` confidence on code-point evidence alone.

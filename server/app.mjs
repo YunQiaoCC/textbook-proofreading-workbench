@@ -15,6 +15,7 @@ import { MAX_PROOFREADING_BODY_BYTES, ProofreadingService } from './services/pro
 import { HttpError, UploadSessionService } from './services/uploadSessionService.mjs'
 import { DocumentLifecycleCoordinator } from './services/documentLifecycleCoordinator.mjs'
 import { DocumentDeletionService } from './services/documentDeletionService.mjs'
+import { ChapterDeletionService } from './services/chapterDeletionService.mjs'
 import { NativePdfTextExtractor } from './services/nativePdfTextExtractor.mjs'
 import { DocumentTextService } from './services/documentTextService.mjs'
 import { PdfPageVisualTriage } from './services/pdfPageVisualTriage.mjs'
@@ -117,6 +118,7 @@ async function handleRequest(request, response, services) {
     aiReviewService,
     aiReviewRuntimeService,
     documentDeletionService,
+    chapterDeletionService,
     documentTextService,
   } = services
   const segments = routeSegments(request.url ?? '/')
@@ -238,6 +240,26 @@ async function handleRequest(request, response, services) {
   }
 
   if (
+    segments.length === 7 &&
+    segments[0] === 'api' &&
+    segments[1] === 'documents' &&
+    segments[3] === 'chapters' &&
+    segments[5] === 'ai-review' &&
+    segments[6] === 'rollback'
+  ) {
+    if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
+    const body = await readJsonBody(request)
+    sendJson(response, 200, await aiReviewService.rollback(
+      segments[2],
+      segments[4],
+      body.targetStage,
+      body.reviewerName,
+      body.baseRevision,
+    ))
+    return
+  }
+
+  if (
     segments.length === 6 &&
     segments[0] === 'api' &&
     segments[1] === 'documents' &&
@@ -348,10 +370,18 @@ async function handleRequest(request, response, services) {
     segments[1] === 'documents' &&
     segments[3] === 'chapters'
   ) {
-    if (request.method !== 'PUT') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
-    const body = await readJsonBody(request)
-    sendJson(response, 200, await chapterService.update(segments[2], segments[4], body))
-    return
+    if (request.method === 'PUT') {
+      const body = await readJsonBody(request)
+      sendJson(response, 200, await chapterService.update(segments[2], segments[4], body))
+      return
+    }
+    if (request.method === 'DELETE') {
+      await chapterDeletionService.delete(segments[2], segments[4])
+      response.statusCode = 204
+      response.end()
+      return
+    }
+    throw new HttpError(405, 'method_not_allowed', 'method not allowed')
   }
 
   if (
@@ -506,6 +536,12 @@ export async function createIngestionServer(options = {}) {
     documentStorage,
     lifecycleCoordinator,
   })
+  const chapterDeletionService = new ChapterDeletionService({
+    documentRepository,
+    aiReviewRepository,
+    proofreadingRepository,
+    lifecycleCoordinator,
+  })
   const inspectionService = new PopplerInspectionService({
     storageRoot: config.storageRoot,
     timeoutMs: config.inspectionTimeoutMs,
@@ -537,6 +573,7 @@ export async function createIngestionServer(options = {}) {
     aiReviewService,
     aiReviewRuntimeService,
     documentDeletionService,
+    chapterDeletionService,
     documentTextService,
   }
   const server = createHttpServer((request, response) => {
@@ -575,6 +612,7 @@ export async function createIngestionServer(options = {}) {
     pageVisualTriage,
     uploadService,
     documentDeletionService,
+    chapterDeletionService,
     lifecycleCoordinator,
     async close() {
       clearInterval(cleanupTimer)

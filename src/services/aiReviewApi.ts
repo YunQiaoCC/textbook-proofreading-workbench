@@ -60,3 +60,16 @@ export function completeHumanReview(documentId: string, chapterId: string, revie
     body: JSON.stringify({ reviewerName, baseRevision }),
   })
 }
+
+export function rollbackAiReview(
+  documentId: string,
+  chapterId: string,
+  targetStage: 'human_review_in_progress' | 'awaiting_human_review',
+  reviewerName: string,
+  baseRevision: number,
+) {
+  return requestJson<AiReviewWorkspace>(`${reviewPath(documentId, chapterId)}/rollback`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ targetStage, reviewerName, baseRevision }),
+  })
+}

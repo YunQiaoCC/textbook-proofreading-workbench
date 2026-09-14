@@ -367,7 +367,51 @@
         "humanResolution": "pending"
       }
     },
-    "forbidden": { "jurisdictionScopes": ["全国"], "verificationStatuses": ["verified"], "forbiddenJudgements": ["confirmed_error"] }
+      "forbidden": { "jurisdictionScopes": ["全国"], "verificationStatuses": ["verified"], "forbiddenJudgements": ["confirmed_error"] }
+  },
+  {
+    "caseId": "17-unicode-homoglyph-rendered-normal",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["typo", "terminology_inconsistency"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "18-compatibility-normalized-equivalent",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["typo", "terminology_inconsistency"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "19-genuine-visible-publisher-typo",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_663ca8879a4bb0bb",
+        "documentId": "doc-synth-001",
+        "chapterId": "ch-13",
+        "pdfPage": 204,
+        "blockId": "blk-204-02",
+        "originalText": "中国劳动社会保障出板社",
+        "issueType": "typo",
+        "ruleType": "static",
+        "severity": "minor",
+        "extractionReliability": "high",
+        "verificationStatus": "not_required",
+        "retrievalRequired": "no",
+        "evidence": [],
+        "judgement": "confirmed_error",
+        "suggestion": "将“出板社”改为“出版社”。",
+        "reason": "可靠的页面视觉证据表明出版文本本身存在清楚的错字。",
+        "confidence": "high",
+        "humanResolution": "pending",
+        "correctedText": "中国劳动社会保障出版社"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified"] }
+  },
+  {
+    "caseId": "20-uncertain-glyph-mapping",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "forbiddenJudgements": ["confirmed_error"], "confidence": ["high"] }
   }
 ]
 

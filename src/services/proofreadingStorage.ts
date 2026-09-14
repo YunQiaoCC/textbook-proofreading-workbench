@@ -1,5 +1,6 @@
 import type { IAnnotationStore } from 'inklayer-vue'
 import type { ProofreadingIssue } from '../models/proofreading'
+import { clearProofreadingClientStateFromStorage } from '../../shared/workbenchState.js'
 
 export interface LegacyProofreadingWorkspaceSnapshot {
   annotations: IAnnotationStore[]
@@ -89,12 +90,9 @@ export function saveProofreadingClientState(documentId: string, chapterId: strin
   writeJson(clientStorageKey(documentId, chapterId), state)
 }
 
-export function clearProofreadingClientState(documentId: string) {
+export function clearProofreadingClientState(documentId: string, chapterId?: string) {
   if (typeof window === 'undefined') return
-  const prefix = 'proofreading-client:v3:' + encodedDocumentId(documentId) + ':'
-  for (const key of Object.keys(window.localStorage)) {
-    if (key.startsWith(prefix)) window.localStorage.removeItem(key)
-  }
+  clearProofreadingClientStateFromStorage(window.localStorage, documentId, chapterId)
 }
 
 export { emptyWorkspace }

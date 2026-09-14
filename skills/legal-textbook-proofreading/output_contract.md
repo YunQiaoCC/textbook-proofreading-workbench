@@ -17,6 +17,8 @@ Emit a candidate only when it is:
 
 Do not emit praise, correct items, purely aesthetic formatting preferences, or speculative alternatives with no material effect on legal accuracy or reader understanding. `format` is reportable only when it affects meaning, legal expression, reliable location, or ordinary publication correctness.
 
+Do not emit a Candidate whose only defect is a hidden text-layer Unicode distinction not visibly established on the published page. When publication error and extraction artifact cannot be distinguished, prefer no issue; if a manual check is genuinely actionable, encode that uncertainty using existing v0.1 fields. This clarifies emission behavior and does not change the Candidate schema. Preserve extracted `originalText`; Unicode normalization is only a judgement safeguard.
+
 ## Required fields
 
 The normative machine contract is [schema/issue.schema.json](schema/issue.schema.json). `schemaVersion` is `0.1`. Required fields are:

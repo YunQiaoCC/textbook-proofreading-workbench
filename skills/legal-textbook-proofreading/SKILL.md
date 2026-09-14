@@ -33,6 +33,7 @@ Do not provide legal advice, assess litigation risk, retrieve sources unless a s
 5. Protect legitimate scholarly positions, historical accuracy, pedagogical simplification, and jurisdictional limits.
 6. Never treat one ordinary judgment as a universal rule.
 7. Fewer well-supported candidates are better than speculative correction.
+8. Proofreading evaluates the visible published page, not merely its hidden or extracted PDF text layer.
 
 ## Review unit
 
@@ -40,7 +41,7 @@ Review the smallest meaningful passage plus enough neighboring text to identify 
 
 ## Review Workflow
 
-1. Assess extraction reliability from text quality, block order, bounding boxes, spacing, and page mapping.
+1. Assess extraction reliability from text quality, block order, bounding boxes, spacing, and page mapping. For character-, punctuation-, or spacing-level suspicions, distinguish a visible publication defect from a PDF font, ToUnicode, Unicode normalization, OCR, glyph-mapping, or hidden-text-layer artifact.
 2. Establish current/historical/mixed context, jurisdiction, case status, and whether the passage states law or scholarship.
 3. Scan the review dimensions in [legal_rubric.md](legal_rubric.md); passes are dimensions, not model-call counts.
 4. Assign one `ruleType`, one controlled `issueType`, textbook-impact severity, and retrieval level.
@@ -63,6 +64,8 @@ Set `retrievalRequired` to `must`, `should`, or `no` using [legal_rubric.md](leg
 ## Issue emission threshold
 
 Report a defect or material qualification need, not preference. Do not report purely aesthetic formatting. Do not report a historical statement that is correct for its period, an acceptable defined abbreviation, a harmless teaching simplification, or a contestable view merely because it is non-mainstream. When uncertainty prevents a useful candidate, emit nothing.
+
+Do not emit a candidate whose only asserted defect is an extracted Unicode/code-point distinction that is not visibly established on the published page. A difference that disappears under NFC or NFKC is not by itself proof of a publication typo. Preserve authoritative `originalText` exactly as extracted; normalization is a judgement safeguard, never a source-text rewrite. This safeguard takes priority over the rule that a clear typo needs no retrieval.
 
 ## Human Review
 

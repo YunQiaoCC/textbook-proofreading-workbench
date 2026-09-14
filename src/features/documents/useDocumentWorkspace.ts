@@ -2,12 +2,14 @@ import { computed, onUnmounted, ref } from 'vue'
 import type { Chapter, DocumentTextJob, Page } from '../../models/document'
 import { ApiError } from '../../services/apiClient'
 import { clearProofreadingClientState } from '../../services/proofreadingStorage'
+import { nextSelectedChapterId } from '../../../shared/workbenchState.js'
 import {
   getDocument,
   getDocumentPages,
   getDocumentTextStatus,
   startDocumentTextExtraction,
   deleteDocument as deleteDocumentRequest,
+  deleteChapter as deleteChapterRequest,
   createChapter,
   listChapters,
   listDocuments,
@@ -42,6 +44,8 @@ export function useDocumentWorkspace() {
   const chapterError = ref('')
   const deletingDocumentId = ref<string | null>(null)
   const deleteError = ref('')
+  const deletingChapterId = ref<string | null>(null)
+  const chapterDeleteError = ref('')
   const textSummary = ref<DocumentTextJob | null>(null)
   const textError = ref('')
   const selectedDocument = computed(() =>
@@ -269,6 +273,34 @@ export function useDocumentWorkspace() {
     }
   }
 
+  async function deleteChapterById(chapterId: string) {
+    const documentId = selectedDocumentId.value
+    if (!documentId || deletingChapterId.value) return false
+    deletingChapterId.value = chapterId
+    chapterDeleteError.value = ''
+    const previousChapters = chapters.value
+    const fallbackChapterId = nextSelectedChapterId(previousChapters, selectedChapterId.value, chapterId)
+    try {
+      await deleteChapterRequest(documentId, chapterId)
+      clearProofreadingClientState(documentId, chapterId)
+      if (selectedDocumentId.value === documentId) {
+        chapters.value = previousChapters.filter((chapter) => chapter.id !== chapterId)
+        selectedChapterId.value = fallbackChapterId
+      }
+      return true
+    } catch (deleteFailure) {
+      chapterDeleteError.value = readableError(
+        deleteFailure,
+        deleteFailure instanceof ApiError && deleteFailure.code === 'chapter_ai_running'
+          ? 'AI 初校正在运行，暂时不能删除该章节'
+          : '章节删除失败，请稍后重试',
+      )
+      return false
+    } finally {
+      deletingChapterId.value = null
+    }
+  }
+
   async function loadDocuments(preferredDocumentId?: string) {
     const requestOperationId = ++operationId
     stopPolling()
@@ -324,6 +356,8 @@ export function useDocumentWorkspace() {
     chapterError,
     deletingDocumentId,
     deleteError,
+    deletingChapterId,
+    chapterDeleteError,
     textSummary,
     textError,
     restartTextExtraction,
@@ -334,5 +368,6 @@ export function useDocumentWorkspace() {
     updateChapter: updateDocumentChapter,
     refreshDocument,
     deleteDocumentById,
+    deleteChapterById,
   }
 }

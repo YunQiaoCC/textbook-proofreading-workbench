@@ -6,6 +6,7 @@ import {
   getAiRuntimeStatus,
   getAiReviewWorkspace,
   resolveAiCandidate,
+  rollbackAiReview,
   runAiReview,
   startHumanReview as startHumanReviewRequest,
 } from '../../services/aiReviewApi'
@@ -129,6 +130,10 @@ export function useAiReviewWorkspace(
     resolveAiCandidate(current.documentId, current.chapterId, candidateId, { status: 'modified', resolvedBy: reviewer, modifiedResult }, revision))
   const completeHumanReview = () => mutate((current, reviewer, revision) =>
     completeHumanReviewRequest(current.documentId, current.chapterId, reviewer, revision))
+  const rollbackToHumanReview = () => mutate((current, reviewer, revision) =>
+    rollbackAiReview(current.documentId, current.chapterId, 'human_review_in_progress', reviewer, revision))
+  const rollbackToAwaitingHumanReview = () => mutate((current, reviewer, revision) =>
+    rollbackAiReview(current.documentId, current.chapterId, 'awaiting_human_review', reviewer, revision))
 
   async function startOrRetryAiReview() {
     const current = scope()
@@ -147,5 +152,5 @@ export function useAiReviewWorkspace(
   watch(() => [toValue(documentId), toValue(chapterId)], () => { void load() }, { immediate: true })
   onUnmounted(stopPolling)
 
-  return { workspace, runtimeStatus, loading, acting, error, conflict, load, reload: load, startOrRetryAiReview, startHumanReview, acceptCandidate, rejectCandidate, modifyCandidate, completeHumanReview }
+  return { workspace, runtimeStatus, loading, acting, error, conflict, load, reload: load, startOrRetryAiReview, startHumanReview, acceptCandidate, rejectCandidate, modifyCandidate, completeHumanReview, rollbackToHumanReview, rollbackToAwaitingHumanReview }
 }

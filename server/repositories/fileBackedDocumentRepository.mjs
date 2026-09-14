@@ -153,6 +153,17 @@ export class FileBackedDocumentRepository {
     })
   }
 
+  async removeChapter(documentId, chapterId) {
+    if (!validIdentifier(chapterId)) throw new Error('Invalid chapter identifier')
+    const existing = await this.readRecord(documentId)
+    if (!existing) throw new DocumentNotFoundError(documentId)
+    const chapters = existing.chapters ?? []
+    const nextChapters = chapters.filter((chapter) => chapter.id !== chapterId)
+    if (nextChapters.length === chapters.length) return false
+    await this.writeRecord({ ...existing, chapters: nextChapters })
+    return true
+  }
+
   async getAsset(assetId) {
     const records = await readdir(this.metadataRoot, { withFileTypes: true })
     for (const entry of records) {

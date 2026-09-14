@@ -229,6 +229,42 @@ if (existsSync(skillPath)) {
   if (!/^name:\s+legal-textbook-proofreading\s*$/mu.test(skill)) fail('SKILL.md: invalid skill name')
 }
 
+const goldenById = new Map(goldenEntries.map((item) => [item.caseId, item]))
+for (const caseId of [
+  '17-unicode-homoglyph-rendered-normal',
+  '18-compatibility-normalized-equivalent',
+  '19-genuine-visible-publisher-typo',
+  '20-uncertain-glyph-mapping',
+]) {
+  if (!caseById.has(caseId) || !goldenById.has(caseId)) fail(`missing extraction-artifact regression ${caseId}`)
+}
+for (const caseId of ['17-unicode-homoglyph-rendered-normal', '18-compatibility-normalized-equivalent']) {
+  if (goldenById.get(caseId)?.expected?.issueExpected !== false) {
+    fail(`${caseId}: Unicode-only rendered-normal difference must emit no issue`)
+  }
+}
+const compatibilityCase = caseById.get('18-compatibility-normalized-equivalent')
+if (compatibilityCase && compatibilityCase.input?.text.normalize('NFKC') !== compatibilityCase.context?.visiblePageText.normalize('NFKC')) {
+  fail('18-compatibility-normalized-equivalent: fixture must be NFKC-equivalent')
+}
+const genuineTypo = goldenById.get('19-genuine-visible-publisher-typo')?.expected?.expectedIssue
+if (
+  genuineTypo?.ruleType !== 'static' ||
+  genuineTypo?.verificationStatus !== 'not_required' ||
+  genuineTypo?.retrievalRequired !== 'no' ||
+  genuineTypo?.judgement !== 'confirmed_error'
+) {
+  fail('19-genuine-visible-publisher-typo: genuine visible typo must remain eligible for static confirmed_error')
+}
+const uncertainGlyph = goldenById.get('20-uncertain-glyph-mapping')?.expected
+if (uncertainGlyph?.issueExpected && (
+  uncertainGlyph.expectedIssue?.judgement === 'confirmed_error' ||
+  uncertainGlyph.expectedIssue?.confidence === 'high' ||
+  uncertainGlyph.expectedIssue?.verificationStatus !== 'manual_check_required'
+)) {
+  fail('20-uncertain-glyph-mapping: uncertain glyph cannot be high-confidence confirmed_error')
+}
+
 if (failures.length > 0) {
   console.error(`Legal proofreading skill validation FAILED (${failures.length})`)
   failures.forEach((message) => console.error(`- ${message}`))

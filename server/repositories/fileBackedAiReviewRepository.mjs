@@ -129,4 +129,8 @@ export class FileBackedAiReviewRepository {
   async removeDocumentFiles(documentId) {
     await rm(this.documentDirectory(documentId), { recursive: true, force: true })
   }
+
+  async removeChapterFiles(documentId, chapterId) {
+    await rm(this.recordPath(documentId, chapterId), { force: true })
+  }
 }

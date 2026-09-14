@@ -312,9 +312,50 @@ export class AiChapterReviewService {
       humanReview: {
         status: 'in_progress',
         reviewerName: responsibleReviewer,
-        startedAt: this.now().toISOString(),
+        startedAt: workspace.humanReview.startedAt ?? this.now().toISOString(),
       },
     }, expectedRevision)
+  }
+
+  async rollback(documentId, chapterId, targetStage, reviewerName, expectedRevision) {
+    const { chapter, workspace } = await this.current(documentId, chapterId)
+    assertExpectedRevision(workspace, expectedRevision)
+
+    if (workspace.stage === 'completed' && targetStage === 'human_review_in_progress') {
+      const responsibleReviewer = assertReviewer(chapter, workspace, reviewerName)
+      if (workspace.humanReview.reviewerName && workspace.humanReview.reviewerName !== responsibleReviewer) {
+        conflict('chapter assignee no longer matches the original reviewer', 'ai_review_reviewer_mismatch')
+      }
+      const { completedAt: _completedAt, ...preservedHumanReview } = workspace.humanReview
+      return this.save(documentId, chapterId, {
+        ...workspace,
+        stage: 'human_review_in_progress',
+        humanReview: {
+          ...preservedHumanReview,
+          status: 'in_progress',
+          reviewerName: responsibleReviewer,
+        },
+      }, expectedRevision)
+    }
+
+    if (workspace.stage === 'human_review_in_progress' && targetStage === 'awaiting_human_review') {
+      const responsibleReviewer = assertReviewer(chapter, workspace, reviewerName)
+      if (workspace.humanReview.reviewerName && workspace.humanReview.reviewerName !== responsibleReviewer) {
+        conflict('chapter assignee no longer matches the original reviewer', 'ai_review_reviewer_mismatch')
+      }
+      const { completedAt: _completedAt, ...preservedHumanReview } = workspace.humanReview
+      return this.save(documentId, chapterId, {
+        ...workspace,
+        stage: 'awaiting_human_review',
+        humanReview: {
+          ...preservedHumanReview,
+          status: 'not_started',
+          reviewerName: responsibleReviewer,
+        },
+      }, expectedRevision)
+    }
+
+    conflict(`cannot roll back AI review from ${workspace.stage} to ${targetStage}`)
   }
 
   async resolveCandidate(documentId, chapterId, candidateId, resolution, expectedRevision) {

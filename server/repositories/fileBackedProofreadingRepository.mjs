@@ -155,4 +155,8 @@ export class FileBackedProofreadingRepository {
     }
     await rm(chapterDirectory, { recursive: true, force: true })
   }
+
+  async removeChapterFiles(documentId, chapterId) {
+    await rm(this.chapterRecordPath(documentId, chapterId), { force: true })
+  }
 }

@@ -19,6 +19,8 @@
     "test:text-extraction": "node scripts/test-text-extraction.mjs",
     "test:legal-skill": "node scripts/validate-legal-proofreading-skill.mjs",
     "test:ai-review-workflow": "node scripts/test-ai-review-workflow.mjs",
+    "test:workflow-rollback": "node scripts/test-workflow-rollback.mjs",
+    "test:chapter-delete": "node scripts/test-chapter-delete.mjs",
     "test:yuandian-retrieval": "node scripts/test-yuandian-retrieval.mjs",
     "test:auth": "node scripts/test-auth.mjs",
     "test:ai-review-runtime": "node scripts/test-deepseek-responses-client.mjs && node scripts/test-ai-review-runtime.mjs",
