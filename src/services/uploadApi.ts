@@ -28,6 +28,7 @@ export interface UploadSession {
 export interface CompleteUploadResponse {
   uploadSession: UploadSession
   document?: ApiDocument
+  reusedExistingDocument: boolean
   asset?: ApiOriginalPdfAsset
   inspectionSummary?: ApiDocument['inspectionSummary']
   inspectionError?: string

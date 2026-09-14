@@ -38,6 +38,7 @@ const uploadedBytes = ref(0)
 const phase = ref<UploadPhase>('idle')
 const error = ref('')
 const resumeNotice = ref('')
+const duplicateNotice = ref('')
 const requestedPause = ref(false)
 const activeController = ref<AbortController | null>(null)
 let operationId = 0
@@ -207,6 +208,9 @@ async function runUpload(currentOperationId: number) {
       return
     }
 
+    duplicateNotice.value = result.reusedExistingDocument
+      ? '检测到该教材已存在，已进入现有教材继续协作，未创建重复副本。'
+      : ''
     emit('completed', result.document.id)
     if (result.document.processingStatus === 'ready') {
       phase.value = 'completed'
@@ -282,6 +286,7 @@ async function chooseFile(file: File) {
   phase.value = 'idle'
   error.value = ''
   resumeNotice.value = ''
+  duplicateNotice.value = ''
 
   const validationError = validateFile(file)
   if (validationError) {
@@ -372,6 +377,7 @@ onBeforeUnmount(() => {
 
     <p v-if="selectedFile" class="file-name" :title="selectedFile.name">{{ selectedFile.name }}</p>
     <p v-if="resumeNotice" class="resume-notice">{{ resumeNotice }}</p>
+    <p v-if="duplicateNotice" class="duplicate-notice" role="status">{{ duplicateNotice }}</p>
 
     <div v-if="session" class="upload-progress">
       <div class="progress-heading"><span>{{ phaseLabel[phase] }}</span><strong>{{ progressPercent }}%</strong></div>
@@ -401,6 +407,7 @@ onBeforeUnmount(() => {
 .file-picker input { display: none; }
 .file-name { margin: 8px 1px 0; overflow: hidden; color: #53627a; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .resume-notice { margin: 7px 1px 0; color: #8b6a35; font-size: 9px; line-height: 1.4; }
+.duplicate-notice { margin: 7px 1px 0; color: #3f6f5b; font-size: 9px; line-height: 1.4; }
 .upload-progress { margin-top: 9px; }
 .progress-heading, .progress-meta { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
 .progress-heading { color: #60708a; font-size: 9px; } .progress-heading strong { color: #496991; font-size: 10px; }

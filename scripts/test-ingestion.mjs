@@ -117,6 +117,7 @@ async function main() {
     const completed = await call(baseUrl, `/api/uploads/${session.id}/complete`, { method: 'POST' })
     assert.equal(completed.response.status, 200)
     assert.equal(completed.body.uploadSession.status, 'completed')
+    assert.equal(completed.body.reusedExistingDocument, false)
     assert.equal(completed.body.document.processingStatus, 'ready')
     assert.equal(completed.body.document.pageCount, 1)
     assert.equal(completed.body.document.inspectionSummary.pagesWithText, 1)

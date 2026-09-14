@@ -124,6 +124,7 @@ export class UploadSessionService {
     this.onDocumentReady = onDocumentReady
     this.now = now
     this.locks = new Map()
+    this.assetHashLocks = new Map()
   }
 
   async init() {
@@ -330,7 +331,11 @@ export class UploadSessionService {
       const session = await this.loadFreshSession(uploadId)
       this.assertNotExpired(session)
       if (session.status === 'completed' && session.documentId) {
-        return { uploadSession: publicSession(session), document: await this.documentRepository.getById(session.documentId) }
+        return {
+          uploadSession: publicSession(session),
+          document: await this.documentRepository.getById(session.documentId),
+          reusedExistingDocument: session.reusedExistingDocument === true,
+        }
       }
       if (!['created', 'uploading'].includes(session.status)) {
         throw new HttpError(409, 'upload_not_completable', `upload session is ${session.status}`)
@@ -351,29 +356,56 @@ export class UploadSessionService {
       let assembled
       try {
         assembled = await this.assemble(session)
-        const documentId = randomUUID()
-        const asset = await this.documentStorage.storeOriginalPdf({
-          documentId,
-          byteSize: assembled.byteSize,
-          sha256: assembled.sha256,
-          content: openReadStream(assembled.assembledPath),
-        })
-        const now = this.now().toISOString()
-        let document = {
-          id: documentId,
-          title: session.originalFilename,
-          originalAssetId: asset.id,
-          pageCount: 0,
-          processingStatus: 'uploaded',
-          createdAt: now,
-          updatedAt: now,
-        }
-        await this.documentRepository.saveBundle({ document, asset, pages: [], inspectionSummary: null })
+        const completion = await this.withAssetHashLock(assembled.sha256, async () => {
+          const existing = await this.documentRepository.findByAssetSha256(assembled.sha256)
+          if (existing) {
+            session.status = 'completed'
+            session.documentId = existing.document.id
+            session.reusedExistingDocument = true
+            delete session.errorMessage
+            await this.saveSession(session)
+            await rm(this.partDirectory(uploadId), { recursive: true, force: true })
+            return { reusedExistingDocument: true, document: existing.document }
+          }
 
-        session.status = 'completed'
-        session.documentId = documentId
-        await this.saveSession(session)
-        await rm(this.partDirectory(uploadId), { recursive: true, force: true })
+          const documentId = randomUUID()
+          const asset = await this.documentStorage.storeOriginalPdf({
+            documentId,
+            byteSize: assembled.byteSize,
+            sha256: assembled.sha256,
+            content: openReadStream(assembled.assembledPath),
+          })
+          const now = this.now().toISOString()
+          const document = {
+            id: documentId,
+            title: session.originalFilename,
+            originalAssetId: asset.id,
+            pageCount: 0,
+            processingStatus: 'uploaded',
+            createdAt: now,
+            updatedAt: now,
+          }
+          await this.documentRepository.saveBundle({ document, asset, pages: [], inspectionSummary: null })
+
+          session.status = 'completed'
+          session.documentId = documentId
+          session.reusedExistingDocument = false
+          delete session.errorMessage
+          await this.saveSession(session)
+          await rm(this.partDirectory(uploadId), { recursive: true, force: true })
+          return { reusedExistingDocument: false, document, asset }
+        })
+
+        if (completion.reusedExistingDocument) {
+          return {
+            uploadSession: publicSession(session),
+            document: completion.document,
+            reusedExistingDocument: true,
+          }
+        }
+
+        const asset = completion.asset
+        let document = completion.document
 
         document = {
           ...document,
@@ -389,8 +421,8 @@ export class UploadSessionService {
             throw new Error('inspection did not return a usable page count')
           }
           const pages = Array.from({ length: pageCount }, (_, index) => ({
-            id: `${documentId}-page-${index + 1}`,
-            documentId,
+            id: `${document.id}-page-${index + 1}`,
+            documentId: document.id,
             pdfPage: index + 1,
           }))
           const inspectionSummary = {
@@ -414,13 +446,19 @@ export class UploadSessionService {
               console.error('failed to queue native text extraction', error)
             })
           })
-          return { uploadSession: publicSession(session), document, asset, inspectionSummary }
+          return { uploadSession: publicSession(session), document, asset, inspectionSummary, reusedExistingDocument: false }
         } catch (error) {
           document = { ...document, processingStatus: 'failed', updatedAt: this.now().toISOString() }
           await this.documentRepository.saveBundle({ document, asset, pages: [], inspectionSummary: null, requireExisting: true })
           session.errorMessage = error instanceof Error ? error.message : String(error)
           await this.saveSession(session)
-          return { uploadSession: publicSession(session), document, asset, inspectionError: session.errorMessage }
+          return {
+            uploadSession: publicSession(session),
+            document,
+            asset,
+            inspectionError: session.errorMessage,
+            reusedExistingDocument: false,
+          }
         }
       } catch (error) {
         session.status = 'failed'
@@ -466,6 +504,23 @@ export class UploadSessionService {
     } finally {
       release()
       if (this.locks.get(uploadId) === chain) this.locks.delete(uploadId)
+    }
+  }
+
+  async withAssetHashLock(sha256, operation) {
+    const previous = this.assetHashLocks.get(sha256) ?? Promise.resolve()
+    let release
+    const current = new Promise((resolve) => {
+      release = resolve
+    })
+    const chain = previous.then(() => current)
+    this.assetHashLocks.set(sha256, chain)
+    await previous
+    try {
+      return await operation()
+    } finally {
+      release()
+      if (this.assetHashLocks.get(sha256) === chain) this.assetHashLocks.delete(sha256)
     }
   }
 }

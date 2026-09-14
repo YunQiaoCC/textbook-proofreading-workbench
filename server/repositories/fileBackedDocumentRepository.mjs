@@ -122,6 +122,34 @@ export class FileBackedDocumentRepository {
     })
   }
 
+  async findByAssetSha256(sha256) {
+    if (typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256)) {
+      throw new Error('Invalid SHA-256')
+    }
+    const entries = await readdir(this.metadataRoot, { withFileTypes: true })
+    const matches = []
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
+      try {
+        const record = await readJson(path.join(this.metadataRoot, entry.name))
+        if (
+          record.document &&
+          record.asset?.sha256 === sha256 &&
+          record.document.originalAssetId === record.asset.id
+        ) {
+          matches.push({ document: record.document, asset: record.asset })
+        }
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error
+      }
+    }
+    matches.sort((left, right) => {
+      const byCreatedAt = String(left.document.createdAt ?? '').localeCompare(String(right.document.createdAt ?? ''))
+      return byCreatedAt || String(left.document.id).localeCompare(String(right.document.id))
+    })
+    return matches[0] ?? null
+  }
+
   async listPages(documentId) {
     return (await this.readRecord(documentId))?.pages ?? []
   }
