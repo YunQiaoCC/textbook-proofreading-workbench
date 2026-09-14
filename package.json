@@ -21,6 +21,7 @@
     "test:ai-review-workflow": "node scripts/test-ai-review-workflow.mjs",
     "test:workflow-rollback": "node scripts/test-workflow-rollback.mjs",
     "test:ai-candidate-overlays": "node scripts/test-ai-candidate-overlays.mjs",
+    "test:ai-candidate-overlay": "node scripts/test-ai-candidate-overlays.mjs && node scripts/test-ui-layer-clickability.mjs",
     "test:chapter-delete": "node scripts/test-chapter-delete.mjs",
     "test:yuandian-retrieval": "node scripts/test-yuandian-retrieval.mjs",
     "test:auth": "node scripts/test-auth.mjs",

@@ -341,7 +341,7 @@ h2 { margin: 4px 0 0; color: #253047; font-size: 17px; }
 .chapter-empty { padding: 15px 8px; color: #a1aab7; font-size: 10px; text-align: center; background: #f3f5f8; border: 1px dashed #dce2ea; border-radius: 6px; }
 .chapter-setup-button { width: 100%; margin-top: 8px; padding: 7px; color: #49698f; font-size: 10px; background: #f1f5fa; border: 1px solid #d8e2ee; border-radius: 6px; }
 .chapter-setup-button:hover { background: #e7eef8; }
-.chapter-drawer { position: fixed; top: 78px; left: 16px; z-index: 30; display: flex; flex-direction: column; width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 94px); overflow: hidden; background: #fff; border: 1px solid #cfd9e7; border-radius: 12px; box-shadow: 0 20px 55px rgba(25, 37, 57, .24); }
+.chapter-drawer { position: fixed; top: 78px; left: 16px; z-index: var(--z-drawer); display: flex; flex-direction: column; width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 94px); overflow: hidden; background: #fff; border: 1px solid #cfd9e7; border-radius: 12px; box-shadow: 0 20px 55px rgba(25, 37, 57, .24); pointer-events: auto; }
 .chapter-drawer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px 14px; color: #2e3d56; background: #f7f9fc; border-bottom: 1px solid #e3e8ef; }
 .chapter-drawer-kicker { color: #8b98aa; font-size: 9px; font-weight: 700; letter-spacing: .14em; }
 .chapter-drawer h3 { margin: 5px 0 0; font-size: 17px; }
@@ -372,8 +372,8 @@ h2 { margin: 4px 0 0; color: #253047; font-size: 17px; }
 .document-item:hover .document-delete, .document-delete:focus { opacity: 1; }
 .document-delete:hover { color: #8f5c64; background: #fff3f4; }
 .document-delete:disabled { cursor: wait; opacity: .35; }
-.document-delete-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(23, 32, 51, .3); }
-.document-delete-dialog { width: min(410px, calc(100vw - 40px)); padding: 21px; color: #68758b; background: #fff; border: 1px solid #dfe4eb; border-radius: 11px; box-shadow: 0 18px 52px rgba(23, 32, 51, .22); }
+.document-delete-backdrop { position: fixed; inset: 0; z-index: var(--z-modal-backdrop); display: grid; place-items: center; padding: 20px; background: rgba(23, 32, 51, .3); pointer-events: auto; }
+.document-delete-dialog { position: relative; z-index: var(--z-modal-dialog); width: min(410px, calc(100vw - 40px)); padding: 21px; color: #68758b; background: #fff; border: 1px solid #dfe4eb; border-radius: 11px; box-shadow: 0 18px 52px rgba(23, 32, 51, .22); pointer-events: auto; }
 .document-delete-dialog h2 { margin: 0 0 12px; font-size: 16px; }
 .document-delete-dialog p { margin: 7px 0; font-size: 11px; line-height: 1.55; }
 .document-delete-target { color: #2f405e; font-size: 13px !important; font-weight: 700; }

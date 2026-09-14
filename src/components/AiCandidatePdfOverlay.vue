@@ -188,7 +188,7 @@ defineExpose({ refresh, focusCandidate })
 <template><span class="ai-overlay-controller" hidden /></template>
 
 <style>
-.ai-candidate-overlay-layer{position:absolute;z-index:28;overflow:visible;pointer-events:none}
+.ai-candidate-overlay-layer{position:absolute;z-index:var(--z-pdf-overlay);overflow:visible;pointer-events:none}
 .ai-candidate-overlay{position:absolute;min-width:9px;min-height:7px;padding:0;overflow:visible;background:rgba(224,180,72,.28);border:1px solid rgba(173,125,22,.5);border-radius:2px;box-shadow:0 0 0 1px rgba(255,255,255,.2) inset;pointer-events:none;transition:background .15s,border-color .15s,box-shadow .15s}
 .ai-candidate-overlay.is-accepted{background:rgba(89,184,127,.22);border-color:rgba(46,135,82,.5)}
 .ai-candidate-overlay.is-modified{background:rgba(76,153,217,.22);border-color:rgba(39,112,178,.52)}
