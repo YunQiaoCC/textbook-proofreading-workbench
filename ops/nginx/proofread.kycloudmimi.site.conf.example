@@ -20,6 +20,18 @@ server {
         try_files $uri =404;
     }
 
+    # Public, self-contained Friday report. Keep it outside the workbench
+    # build directory so application deploys cannot overwrite the page.
+    location = /social-law {
+        return 301 /social-law/;
+    }
+
+    location ^~ /social-law/ {
+        root /var/www;
+        index index.html;
+        try_files $uri $uri/ =404;
+    }
+
     # Keep /api in the upstream URI. The API also needs the original request
     # context. Authorization is cleared; the application authenticates only
     # with its opaque HttpOnly session cookie.
