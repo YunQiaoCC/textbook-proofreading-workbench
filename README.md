@@ -8,6 +8,19 @@ AI does not automatically modify a PDF. AI findings are candidates only, and a
 human reviewer retains final authority over every accepted, modified, or
 rejected finding.
 
+## Relationship to the upstream project
+
+The upstream `inklayer-vue-starter` demonstrates the minimal integration of
+InkLayer PDF rendering and annotation features in a Vue 3 application. This
+project builds on that foundation to address a different, broader problem: a
+shared, chapter-scoped legal-textbook proofreading workflow with AI-assisted
+first-pass review, legal-source retrieval, revision safeguards, and human final
+authority.
+
+The workbench is therefore a substantial modification of the starter, not a
+claim that its underlying InkLayer integration was created from scratch. This
+relationship does not imply endorsement by Laomai or InkLayer.
+
 ## Capabilities
 
 - PDF reading and InkLayer annotation
