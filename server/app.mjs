@@ -21,6 +21,7 @@ import { NativePdfTextExtractor } from './services/nativePdfTextExtractor.mjs'
 import { DocumentTextService } from './services/documentTextService.mjs'
 import { PdfPageVisualTriage } from './services/pdfPageVisualTriage.mjs'
 import { AuthSessionService, clearedSessionCookie } from './services/authSessionService.mjs'
+import { LoginRateLimitService, loginRequestIdentity } from './services/loginRateLimitService.mjs'
 import { DeepSeekResponsesClient } from './ai/deepseekResponsesClient.mjs'
 import { ChapterTextBundleBuilder } from './ai/chapterTextBundleBuilder.mjs'
 import { AiReviewRuntimeService } from './ai/aiReviewRuntimeService.mjs'
@@ -112,6 +113,7 @@ function errorResponse(error) {
 async function handleRequest(request, response, services) {
   const {
     authSessionService,
+    loginRateLimitService,
     uploadService,
     documentReadService,
     chapterService,
@@ -129,8 +131,22 @@ async function handleRequest(request, response, services) {
     if (segments[2] === 'login') {
       if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed', 'method not allowed')
       const body = await readJsonBody(request)
+      const requestIdentity = loginRequestIdentity(request)
       const result = authSessionService.authenticate(body?.username, body?.password)
-      if (!result) throw new HttpError(401, 'invalid_credentials', 'invalid credentials')
+      if (!result) {
+        const rateLimit = loginRateLimitService.recordFailure(requestIdentity)
+        if (rateLimit.limited) {
+          throw new HttpError(
+            429,
+            'login_rate_limited',
+            'too many login attempts',
+            undefined,
+            { 'retry-after': String(rateLimit.retryAfterSeconds) },
+          )
+        }
+        throw new HttpError(401, 'invalid_credentials', 'invalid credentials')
+      }
+      loginRateLimitService.reset(requestIdentity)
       sendJson(response, 200, {
         authenticated: result.authenticated,
         account: result.account,
@@ -552,6 +568,12 @@ export async function createIngestionServer(options = {}) {
     documentStorage,
     lifecycleCoordinator,
   })
+  const loginRateLimitService = new LoginRateLimitService({
+    maxAttempts: config.loginRateLimitMaxAttempts,
+    windowMs: config.loginRateLimitWindowMs,
+    maxIdentities: config.loginRateLimitMaxIdentities,
+    now: options.loginRateLimitNow,
+  })
   const chapterDeletionService = new ChapterDeletionService({
     documentRepository,
     aiReviewRepository,
@@ -582,6 +604,7 @@ export async function createIngestionServer(options = {}) {
 
   const services = {
     authSessionService,
+    loginRateLimitService,
     uploadService,
     documentReadService,
     chapterService,
@@ -614,6 +637,7 @@ export async function createIngestionServer(options = {}) {
     server,
     config,
     authSessionService,
+    loginRateLimitService,
     documentStorage,
     documentRepository,
     documentReadService,
