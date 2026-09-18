@@ -4,10 +4,13 @@ After=local-fs.target
 
 [Service]
 Type=oneshot
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/home/ubuntu/textbook-proofreading-workbench
-ExecStart=/home/ubuntu/textbook-proofreading-workbench/ops/backup-workbench.sh
+User=workbench
+Group=workbench
+WorkingDirectory=/opt/legal-textbook-proofreading-workbench
+ExecStart=/opt/legal-textbook-proofreading-workbench/ops/backup-workbench.sh
+Environment=PROJECT_ROOT=/opt/legal-textbook-proofreading-workbench
+Environment=STORAGE_ROOT=/var/lib/legal-textbook-proofreading-workbench
+Environment=BACKUP_ROOT=/var/backups/legal-textbook-proofreading-workbench
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

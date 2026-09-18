@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 umask 077
 
-BACKUP_ROOT="${BACKUP_ROOT:-/home/ubuntu/textbook-proofreading-backups}"
+BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/legal-textbook-proofreading-workbench}"
 NODE_BIN="${NODE_BIN:-$(command -v node)}"
 
 if [[ $# -gt 1 ]]; then

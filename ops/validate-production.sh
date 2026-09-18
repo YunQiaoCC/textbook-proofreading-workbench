@@ -7,9 +7,9 @@ fi
 
 umask 077
 
-BASE_URL="${BASE_URL:-https://proofread.kycloudmimi.site}"
+BASE_URL="${BASE_URL:-https://proofreading.example.com}"
 NODE_BIN="${NODE_BIN:-$(command -v node)}"
-AUTH_ENV_FILE="${AUTH_ENV_FILE:-/etc/textbook-proofreading/auth.env}"
+AUTH_ENV_FILE="${AUTH_ENV_FILE:-/etc/legal-textbook-proofreading-workbench/auth.env}"
 TMP_ROOT="$(mktemp -d -t textbook-production-smoke-XXXXXX)"
 LOGIN_BODY="$TMP_ROOT/login.json"
 LOGIN_HEADERS="$TMP_ROOT/login.headers"

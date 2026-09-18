@@ -3,9 +3,9 @@ set -Eeuo pipefail
 
 umask 077
 
-PROJECT_ROOT="${PROJECT_ROOT:-/home/ubuntu/textbook-proofreading-workbench}"
-STORAGE_ROOT="${STORAGE_ROOT:-$PROJECT_ROOT/storage}"
-BACKUP_ROOT="${BACKUP_ROOT:-/home/ubuntu/textbook-proofreading-backups}"
+PROJECT_ROOT="${PROJECT_ROOT:-/opt/legal-textbook-proofreading-workbench}"
+STORAGE_ROOT="${STORAGE_ROOT:-/var/lib/legal-textbook-proofreading-workbench}"
+BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/legal-textbook-proofreading-workbench}"
 RETENTION_COUNT="${RETENTION_COUNT:-7}"
 
 if ! [[ "$RETENTION_COUNT" =~ ^[1-9][0-9]*$ ]]; then

@@ -7,29 +7,43 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
+node_modules/
+dist/
 dist-ssr
 *.local
 .env
 .env.*
 !.env.example
 
+# Credentials and local certificates
+*.key
+*.pem
+*.p12
+*.pfx
+
 # Private local document storage. Original PDFs and metadata never belong in Git.
 storage/
+backups/
+
+# Runtime data and disposable artifacts
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+*.tmp
 
 # Editor directories and files
-.vscode/*
+.vscode/
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
-# Lock files (use latest compatible versions)
-package-lock.json
+# npm is the canonical package manager; package-lock.json is committed.
 pnpm-lock.yaml
 yarn.lock

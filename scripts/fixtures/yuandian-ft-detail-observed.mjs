@@ -1,3 +1,4 @@
+// Synthetic shape-only fixture derived from the public adapter contract. It contains no provider data.
 const FAKE_FT_DETAIL = Object.freeze({
   _score: 1,
   content: 'FAKE_CONTENT',

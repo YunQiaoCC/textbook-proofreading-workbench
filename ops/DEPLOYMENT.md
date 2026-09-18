@@ -1,8 +1,8 @@
 # Production deployment
 
-This deployment keeps the existing file-backed persistence and runs exactly
-one Node API process. The supported topology after the authentication cutover
-is:
+This document describes a generic single-process deployment. Real domains,
+hostnames, addresses, usernames, paths, secrets, storage, and installed service
+configuration are intentionally kept outside the repository.
 
 ```text
 HTTPS
@@ -11,176 +11,128 @@ Nginx
   |-- Vue static bundle and /login
   `-- /api reverse proxy
           |
-    Node application authentication
-    opaque HttpOnly session cookie
+    one Node.js process
+    opaque HttpOnly sessions
           |
     private file-backed storage
 ```
 
-Unauthenticated visitors may download `index.html`, JavaScript, CSS, and the
-login view. Nginx never serves textbook storage. Every product `/api/*` route,
-including PDF GET and HEAD, requires a valid Node-side session. Only
-`POST /api/auth/login`, `GET /api/auth/session`, and `POST /api/auth/logout`
-are public API routes.
-
-The actual Nginx, systemd, secret, storage, and backup paths are host
-configuration. Only templates and scripts belong in Git. Never commit a
-password, password hash, session ID, production storage, backups, PDFs, or
-environment secrets.
+Nginx must never serve runtime storage. Every product API route, including PDF
+GET and HEAD, requires a valid Node-side session. Only login, session status,
+and logout are public API routes.
 
 ## Shared access model
 
-There is exactly one shared workbench account: username `proofreader` plus one
-shared password. Seven people can log in concurrently. Each browser receives
-an independent random server-side session, and logging out one browser does
-not invalidate the others.
+The workbench uses one shared account for a seven-person editorial team. Each
+browser receives an independent random session. The login name is only an
+access gate: chapter and issue reviewer identity remains the selected chapter
+assignee.
 
-This account answers only whether a request may enter the workbench. There are
-no personal users, display names, registration, RBAC, JWTs, or user database.
-The chapter workflow identity remains `Chapter.assigneeName`; human-created
-issue reviewers and AI-resolution reviewers must continue to use the selected
-chapter assignee, never the shared login username.
+Sessions are process-memory state and expire after seven days by default. A
+restart invalidates sessions without changing documents, chapters,
+annotations, issues, or AI review state. The file-backed locking model requires
+exactly one Node process; do not use clustering or multiple API workers.
 
-Sessions are held only in the memory of the single Node process for seven days.
-Restarting the API invalidates all sessions and requires everyone to log in
-again. Document, chapter, annotation, issue, and review persistence is
-unaffected.
+`POST /api/auth/login` uses a bounded, process-memory rate limiter keyed by the
+client IP supplied through `X-Real-IP` by a trusted loopback proxy. The default
+is 10 failed attempts in 10 minutes with at most 10,000 active identities. A
+successful login clears that identity's failure bucket. The limiter does not
+apply to authenticated APIs.
 
-Concurrency remains scoped by `documentId + chapterId + revision`:
+## Host-specific configuration
 
-- different chapters have independent workspace files, locks, and revisions;
-- stale writes to the same chapter still return HTTP 409;
-- shared authentication does not become a revision or reviewer identity;
-- the file-backed lock assumes one Node process, so do not run a second API
-  worker or cluster.
+Use a dedicated service account and host-owned directories. The checked-in
+templates use these examples:
 
-## Authentication secret
+- application: `/opt/legal-textbook-proofreading-workbench`
+- persistence: `/var/lib/legal-textbook-proofreading-workbench`
+- environment files: `/etc/legal-textbook-proofreading-workbench/`
+- backups: `/var/backups/legal-textbook-proofreading-workbench`
+- public host: `proofreading.example.com`
 
-Production loads the shared credential from
-`/etc/textbook-proofreading/auth.env`:
+Adapt copies during installation. Do not commit the adapted files. Updating the
+repository must not overwrite an already-installed Nginx site or systemd unit.
+
+## Environment files
+
+Authentication is required in production. Store the real values in a
+root-managed file outside Git:
 
 ```text
-WORKBENCH_ACCESS_USERNAME=proofreader
-WORKBENCH_ACCESS_PASSWORD=<secret>
+WORKBENCH_ACCESS_USERNAME=<shared-login-name>
+WORKBENCH_ACCESS_PASSWORD=<long-random-secret>
 ```
 
-Create that file only during the production cutover, outside the repository,
-owned by root and readable only as required by systemd. The API unit sets
-`WORKBENCH_AUTH_REQUIRED=1` and deliberately uses the required form
-`EnvironmentFile=/etc/textbook-proofreading/auth.env`. If the file, username,
-or password is missing, the service must fail closed instead of starting an
-unauthenticated API.
+The service unit sets `WORKBENCH_AUTH_REQUIRED=1` and loads this file without
+the optional `-` prefix, so a missing credential file fails closed.
 
-The session cookie is named `proofread_session` and contains only a 32-byte
-random opaque ID. It is `HttpOnly`, `Secure`, `SameSite=Lax`, scoped to `/`,
-and has a `Max-Age` aligned with the seven-day server TTL.
+Optional integrations use separate external files:
 
-## First-time installation
+```text
+DEEPSEEK_API_KEY=<secret>
+YUANDIAN_API_KEY=<secret>
+```
 
-Run from the project directory as `ubuntu`:
+Missing optional provider configuration must leave the core workbench usable.
+Never place credentials, session IDs, cookies, provider responses, or textbook
+data in the repository.
+
+## Installation and update
+
+Use npm and the committed lockfile:
 
 ```bash
 npm ci
 npm run build
 ```
 
-After the authentication secret has been created during cutover, install the
-service templates as root, then start the API and daily backup timer:
+For a first installation, adapt and install copies of the files below:
 
-```bash
-sudo install -o root -g root -m 644 ops/systemd/textbook-proofreading-api.service /etc/systemd/system/textbook-proofreading-api.service
-sudo install -o root -g root -m 644 ops/systemd/textbook-proofreading-backup.service /etc/systemd/system/textbook-proofreading-backup.service
-sudo install -o root -g root -m 644 ops/systemd/textbook-proofreading-backup.timer /etc/systemd/system/textbook-proofreading-backup.timer
-sudo systemctl daemon-reload
-sudo systemctl enable --now textbook-proofreading-api
-sudo systemctl enable --now textbook-proofreading-backup.timer
-```
+- `ops/systemd/textbook-proofreading-api.service`
+- `ops/systemd/textbook-proofreading-backup.service`
+- `ops/systemd/textbook-proofreading-backup.timer`
+- `ops/nginx/textbook-proofreading.example.conf`
 
-## Yuandian retrieval
-
-Store the production Yuandian credential outside Git at
-`/etc/textbook-proofreading/yuandian.env` using this format:
-
-```text
-YUANDIAN_API_KEY=<secret>
-```
-
-The API service loads it through
-`EnvironmentFile=-/etc/textbook-proofreading/yuandian.env`. The leading `-`
-remains intentional for this optional integration: missing Yuandian
-configuration is reported as `provider_unavailable` instead of preventing the
-core API from starting.
-
-After installing the unit and restarting the API, run the production smoke as
-the `ubuntu` user. On Node versions that support `--env-file`, use:
-
-```bash
-node --env-file=/etc/textbook-proofreading/yuandian.env scripts/smoke-yuandian-production.mjs
-```
-
-The smoke performs one direct article retrieval and prints only sanitized
-status fields. It never prints the secret, evidence body, or provider record
-ID value. Do not copy the environment file or its contents into the repository.
+Test Nginx before reloading it. On later code-only deployments, do not reinstall
+host-specific templates unless their intended change has been reviewed.
 
 ## Nginx boundary
 
-The Nginx template terminates HTTPS, serves the Vue SPA, and proxies `/api/`.
-It contains no Basic Auth directives and sends no `X-Authenticated-User`.
-It explicitly clears `Authorization`; Node trusts only `proofread_session`.
-The ACME challenge, SPA fallback, and PDF.js `.mjs` handling remain intact.
-
-Before installing a changed Nginx template, save the current site file with a
-timestamp, install the example, run `sudo nginx -t`, and reload only after that
-test passes.
+The template terminates HTTPS, serves the SPA, and proxies `/api/`. It clears
+`Authorization`; the application trusts only its opaque session cookie. It
+overwrites `X-Real-IP` with the actual client address. Keep the Node listener on
+loopback so a remote caller cannot supply a trusted proxy identity directly.
 
 ## Storage and backups
 
-`storage/` is owned by `ubuntu:ubuntu`; directories use mode 700 and files use
-mode 600. Nginx never reads storage directly. The authenticated Node API is the
-only HTTP path to textbook data.
+Runtime directories should be mode 700 and runtime files mode 600. The Node
+service is the only HTTP path to textbook data.
 
-`ops/backup-workbench.sh` archives only `storage/documents/` and
-`storage/metadata/`. It excludes `storage/temp/`, writes a timestamped archive,
-SHA256 sidecar, and manifest, then retains the newest seven successful
-archives. Pruning happens only after the new archive and metadata have been
-written successfully. The backup root is outside the repository and must use
-mode 700, with archives and manifests at mode 600.
+`ops/backup-workbench.sh` archives only durable `documents/` and `metadata/`
+data, excludes resumable upload sessions, writes a SHA-256 sidecar and manifest,
+and retains the newest seven successful archives. Configure `PROJECT_ROOT`,
+`STORAGE_ROOT`, and `BACKUP_ROOT` in the installed unit when host paths differ.
 
-`ops/verify-backup.sh` verifies the checksum, extracts into a temporary
-directory, checks `documents/` and `metadata/`, and parses every JSON metadata
-file. It never replaces production storage.
+`ops/verify-backup.sh` verifies and parses an archive in a temporary directory;
+it never replaces production storage.
 
-This is a file-level snapshot, not a database transaction spanning every
-chapter. Immutable document assets and atomic metadata writes make that level
-of consistency acceptable for the current chapter-scoped seven-person
-workflow.
+## Production validation
 
-## Production cutover and validation
-
-Do not partially adapt `ops/validate-production.sh` while production still
-uses Nginx Basic Auth. In the dedicated cutover round:
-
-1. create `/etc/textbook-proofreading/auth.env`;
-2. install the new build and systemd unit;
-3. while the old Basic Auth gate still protects the site, verify Node login,
-   session, logout, protected API, and PDF behavior;
-4. install the Nginx template that removes Basic Auth;
-5. run `nginx -t`;
-6. reload Nginx;
-7. run public login/logout plus unauthenticated 401 and authenticated 200
-   smoke checks.
-
-Run the session-auth production validation as root so it can read the protected
-credential file without sourcing it:
+Run the validator with host-specific values supplied externally:
 
 ```bash
-sudo ops/validate-production.sh
+sudo BASE_URL=https://your-workbench.example \
+  AUTH_ENV_FILE=/path/to/private/auth.env \
+  ops/validate-production.sh
 ```
 
-The script parses `/etc/textbook-proofreading/auth.env` strictly, keeps the
-credential and cookie jar in a mode-700 temporary directory, never prints
-either value, validates unauthenticated and authenticated behavior, exercises
-only its own synthetic PDF, verifies restart recovery after logging in again,
-logs out, and removes the synthetic document. Use only synthetic, public, or
-open-access PDFs for any additional deployment smoke tests; never upload an
-unpublished textbook during validation.
+The validator uses a generated synthetic PDF, exercises session authentication,
+chapter-scoped persistence, range reads, restart recovery, and cleanup. It must
+never upload a real or unpublished textbook.
+
+Provider production smoke scripts make real external requests and are not part
+of ordinary deployment validation. Run them only with explicit authorization.
+
+Before and after deployment, compute read-only aggregate counts and checksums
+for document metadata, chapter metadata, proofreading workspaces, and AI review
+workspaces. A code-only deployment must leave all four unchanged.

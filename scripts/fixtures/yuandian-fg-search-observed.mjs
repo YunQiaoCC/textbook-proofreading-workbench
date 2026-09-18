@@ -1,3 +1,4 @@
+// Synthetic shape-only fixture derived from the public adapter contract. It contains no provider data.
 const FAKE_RECORD = Object.freeze({
   _score: 1,
   dy: 'FAKE_REGION',

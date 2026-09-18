@@ -1,3 +1,4 @@
+// Synthetic shape-only fixture derived from the public adapter contract. It contains no provider data.
 const FAKE_VECTOR_RECORD = Object.freeze({
   content: 'FAKE_VECTOR_CONTENT',
   dy: 'FAKE_REGION',

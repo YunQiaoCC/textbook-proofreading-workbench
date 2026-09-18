@@ -3,19 +3,19 @@ Description=Textbook proofreading Node API
 After=network.target
 
 [Service]
-EnvironmentFile=-/etc/textbook-proofreading/deepseek.env
+EnvironmentFile=-/etc/legal-textbook-proofreading-workbench/deepseek.env
 Type=simple
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/home/ubuntu/textbook-proofreading-workbench
-ExecStart=/usr/bin/node /home/ubuntu/textbook-proofreading-workbench/server/app.mjs
-EnvironmentFile=-/etc/textbook-proofreading/yuandian.env
-EnvironmentFile=/etc/textbook-proofreading/auth.env
+User=workbench
+Group=workbench
+WorkingDirectory=/opt/legal-textbook-proofreading-workbench
+ExecStart=/usr/bin/node /opt/legal-textbook-proofreading-workbench/server/app.mjs
+EnvironmentFile=-/etc/legal-textbook-proofreading-workbench/yuandian.env
+EnvironmentFile=/etc/legal-textbook-proofreading-workbench/auth.env
 Environment=NODE_ENV=production
 Environment=WORKBENCH_AUTH_REQUIRED=1
 Environment=DOCUMENT_API_HOST=127.0.0.1
 Environment=DOCUMENT_API_PORT=8787
-Environment=DOCUMENT_STORAGE_ROOT=/home/ubuntu/textbook-proofreading-workbench/storage
+Environment=DOCUMENT_STORAGE_ROOT=/var/lib/legal-textbook-proofreading-workbench
 Restart=on-failure
 RestartSec=2
 UMask=0077

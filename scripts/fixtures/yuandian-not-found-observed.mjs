@@ -1,3 +1,4 @@
+// Synthetic shape-only fixture derived from the public adapter contract. It contains no provider data.
 export function observedNotFoundResponse() {
   return {
     content: [],
