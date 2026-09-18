@@ -42,6 +42,7 @@ export class DocumentTextService {
     this.queue = []
     this.queuedIds = new Set()
     this.activeDocumentId = null
+    this.idleWaiters = new Set()
   }
 
   async init() {
@@ -83,8 +84,18 @@ export class DocumentTextService {
       if (!(error instanceof DocumentNotFoundError)) console.error('document text extraction failed', error)
     } finally {
       this.activeDocumentId = null
-      if (this.queue.length > 0) queueMicrotask(() => { void this.drain() })
+      if (this.queue.length > 0) {
+        queueMicrotask(() => { void this.drain() })
+      } else {
+        for (const resolve of this.idleWaiters) resolve()
+        this.idleWaiters.clear()
+      }
     }
+  }
+
+  async waitForIdle() {
+    if (!this.activeDocumentId && this.queue.length === 0) return
+    await new Promise((resolve) => this.idleWaiters.add(resolve))
   }
 
   async start(documentId) {

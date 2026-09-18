@@ -658,11 +658,15 @@ export async function createIngestionServer(options = {}) {
     lifecycleCoordinator,
     async close() {
       clearInterval(cleanupTimer)
-      await aiReviewRuntimeService.close()
-      if (!server.listening) return
-      await new Promise((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()))
-      })
+      if (server.listening) {
+        await new Promise((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()))
+        })
+      }
+      await Promise.all([
+        aiReviewRuntimeService.close(),
+        documentTextService.waitForIdle(),
+      ])
     },
   }
 }
