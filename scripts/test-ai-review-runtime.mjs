@@ -559,7 +559,7 @@ try {
     assert.equal(serialized.includes('另一建议'), false)
     assert.equal(serialized.includes('不完整证据'), false)
   })
-  await test('systemd-deepseek-env-optional', async () => assert.equal((await readFile(path.resolve('ops/systemd/textbook-proofreading-api.service'), 'utf8')).includes('EnvironmentFile=-/etc/textbook-proofreading/deepseek.env'), true))
+  await test('systemd-deepseek-env-optional', async () => assert.equal((await readFile(path.resolve('ops/systemd/textbook-proofreading-api.service'), 'utf8')).includes('EnvironmentFile=-/etc/legal-textbook-proofreading-workbench/deepseek.env'), true))
 } finally {
   await app.close(); await rm(root, { recursive: true, force: true })
 }
