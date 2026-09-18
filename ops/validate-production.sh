@@ -19,12 +19,19 @@ DOCUMENT_ID=""
 cleanup() {
   set +e
   if [[ -n "$DOCUMENT_ID" && -f "$LOGIN_BODY" ]]; then
-    : > "$COOKIE_JAR"
-    curl --max-time 45 -sS -o /dev/null -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
-      -X POST -H 'content-type: application/json' --data-binary "@$LOGIN_BODY" \
-      "$BASE_URL/api/auth/login" 2>/dev/null
-    curl --max-time 45 -sS -o /dev/null -b "$COOKIE_JAR" \
-      -X DELETE "$BASE_URL/api/documents/$DOCUMENT_ID" 2>/dev/null
+    for _ in {1..30}; do
+      : > "$COOKIE_JAR"
+      login_code="$(curl --max-time 45 -sS -o /dev/null -w '%{http_code}' \
+        -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+        -X POST -H 'content-type: application/json' --data-binary "@$LOGIN_BODY" \
+        "$BASE_URL/api/auth/login" 2>/dev/null)"
+      if [[ "$login_code" = 200 ]]; then
+        delete_code="$(curl --max-time 45 -sS -o /dev/null -w '%{http_code}' -b "$COOKIE_JAR" \
+          -X DELETE "$BASE_URL/api/documents/$DOCUMENT_ID" 2>/dev/null)"
+        [[ "$delete_code" = 204 || "$delete_code" = 404 ]] && break
+      fi
+      sleep 1
+    done
   fi
   rm -rf -- "$TMP_ROOT"
 }
@@ -266,6 +273,15 @@ test "$(systemctl is-active textbook-proofreading-api.service)" = active
 NEW_MAIN_PID="$(systemctl show -p MainPID --value textbook-proofreading-api.service)"
 test -n "$NEW_MAIN_PID"
 test "$NEW_MAIN_PID" != "$OLD_MAIN_PID"
+
+# systemd can report active before Node has bound the loopback socket. Wait for
+# the public session endpoint before asserting post-restart authentication.
+for _ in {1..30}; do
+  READY_CODE="$(curl_status "$BASE_URL/api/auth/session" 2>/dev/null || true)"
+  [[ "$READY_CODE" = 200 ]] && break
+  sleep 1
+done
+test "$(curl_status "$BASE_URL/api/auth/session")" = 200
 test "$(auth_curl_status "$BASE_URL/api/documents")" = 401
 test "$(login)" = 200
 
