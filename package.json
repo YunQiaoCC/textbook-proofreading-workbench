@@ -1,7 +1,7 @@
 {
-  "name": "inklayer-vue-starter",
+  "name": "legal-textbook-proofreading-workbench",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -26,6 +26,8 @@
     "test:chapter-delete": "node scripts/test-chapter-delete.mjs",
     "test:yuandian-retrieval": "node scripts/test-yuandian-retrieval.mjs",
     "test:auth": "node scripts/test-auth.mjs",
+    "test:login-rate-limit": "node scripts/test-login-rate-limit.mjs",
+    "test:open-source": "node scripts/test-open-source-readiness.mjs",
     "test:ai-review-runtime": "node scripts/test-deepseek-responses-client.mjs && node scripts/test-ai-review-runtime.mjs",
     "smoke:deepseek-production": "node scripts/smoke-deepseek-production.mjs",
     "smoke:deepseek-screening-schema": "node scripts/smoke-deepseek-screening-schema.mjs",
