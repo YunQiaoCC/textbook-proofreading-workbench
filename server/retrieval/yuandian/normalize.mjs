@@ -35,14 +35,55 @@ function comparable(value) {
 const LEGAL_TITLE_WITH_OPTIONAL_REVISION_SUFFIX =
   /^《([^《》]+)》(?=(?:\((?:18|19|20)\d{2}年?(?:修正|修订)\))?$)/u
 const LEGAL_TITLE_REVISION_SUFFIX = /^(.+)\(((?:18|19|20)\d{2})年?(修正|修订)\)$/u
+const PROMULGATION_NOTICE_TITLE =
+  /^.{1,80}(?:颁发|颁布|发布|公布|印发)《([^《》]+)》(?:的)?通知$/u
+const NATIONAL_TITLE_PREFIX = /^中华人民共和国/u
+const ARTICLE_COMPONENT = /(?:第)?([0-9〇零一二三四五六七八九十百千万两]+)(条|款|项)/gu
+
+const CHINESE_DIGITS = new Map([
+  ['〇', 0], ['零', 0], ['一', 1], ['二', 2], ['两', 2], ['三', 3], ['四', 4],
+  ['五', 5], ['六', 6], ['七', 7], ['八', 8], ['九', 9],
+])
+const CHINESE_UNITS = new Map([['十', 10], ['百', 100], ['千', 1000]])
+
+function parseChineseInteger(value) {
+  if (/^\d+$/u.test(value)) return String(Number(value))
+  if (![...value].some((character) => CHINESE_UNITS.has(character) || character === '万')) {
+    const digits = [...value].map((character) => CHINESE_DIGITS.get(character))
+    return digits.every((digit) => digit !== undefined) ? String(Number(digits.join(''))) : undefined
+  }
+  let total = 0
+  let section = 0
+  let digit = 0
+  for (const character of value) {
+    if (CHINESE_DIGITS.has(character)) {
+      digit = CHINESE_DIGITS.get(character)
+      continue
+    }
+    if (CHINESE_UNITS.has(character)) {
+      section += (digit || 1) * CHINESE_UNITS.get(character)
+      digit = 0
+      continue
+    }
+    if (character === '万') {
+      total += (section + digit || 1) * 10_000
+      section = 0
+      digit = 0
+      continue
+    }
+    return undefined
+  }
+  return String(total + section + digit)
+}
 
 export function canonicalizeLegalTitle(value) {
   const raw = nonEmpty(value)
   if (!raw) return undefined
-  return raw
+  const canonical = raw
     .normalize('NFKC')
     .replace(/\s+/gu, '')
     .replace(LEGAL_TITLE_WITH_OPTIONAL_REVISION_SUFFIX, '$1')
+  return canonical.replace(PROMULGATION_NOTICE_TITLE, '$1')
 }
 
 function legalTitleParts(value) {
@@ -62,11 +103,42 @@ export function sameLegalTitle(left, right) {
   const rightParts = legalTitleParts(right)
   if (!leftParts || !rightParts) return false
   if (leftParts.canonical === rightParts.canonical) return true
-  if (leftParts.base !== rightParts.base) return false
+  const leftBase = leftParts.base.replace(NATIONAL_TITLE_PREFIX, '')
+  const rightBase = rightParts.base.replace(NATIONAL_TITLE_PREFIX, '')
+  if (leftParts.base !== rightParts.base && leftBase !== rightBase) return false
   // A base title may identify the same instrument as one explicitly carrying
   // the observed revision suffix. Two different explicit revisions are not
   // collapsed because version identity remains independently significant.
-  return Boolean(leftParts.revisionSuffix) !== Boolean(rightParts.revisionSuffix)
+  if (!leftParts.revisionSuffix || !rightParts.revisionSuffix) return true
+  return leftParts.revisionSuffix.year === rightParts.revisionSuffix.year &&
+    leftParts.revisionSuffix.kind === rightParts.revisionSuffix.kind
+}
+
+export function canonicalizeArticleNumber(value) {
+  const raw = nonEmpty(value)?.normalize('NFKC').replace(/\s+/gu, '')
+  if (!raw) return undefined
+  const bare = /^(?:第)?([0-9〇零一二三四五六七八九十百千万两]+)$/u.exec(raw)
+  if (bare) {
+    const number = parseChineseInteger(bare[1])
+    return number === undefined ? undefined : `article:${number}`
+  }
+  const components = []
+  let consumed = ''
+  for (const match of raw.matchAll(ARTICLE_COMPONENT)) {
+    consumed += match[0]
+    const number = parseChineseInteger(match[1])
+    if (number === undefined) return undefined
+    const type = { 条: 'article', 款: 'paragraph', 项: 'item' }[match[2]]
+    components.push(`${type}:${number}`)
+  }
+  return components.length && consumed === raw ? components.join('|') : undefined
+}
+
+export function sameArticleNumber(left, right) {
+  const leftCanonical = canonicalizeArticleNumber(left)
+  const rightCanonical = canonicalizeArticleNumber(right)
+  if (leftCanonical && rightCanonical) return leftCanonical === rightCanonical
+  return Boolean(comparable(left)) && comparable(left) === comparable(right)
 }
 
 export function mapYuandianSourceType(rawAuthorityLevel) {
@@ -283,7 +355,7 @@ export function normalizeYuandianDetail({ claim, record, searchCandidate, provid
     warnings.push('target_not_confirmed')
     sufficient = false
   }
-  if (claim.knownArticleNumber && comparable(articleNumber) !== comparable(claim.knownArticleNumber)) {
+  if (claim.knownArticleNumber && !sameArticleNumber(articleNumber, claim.knownArticleNumber)) {
     warnings.push('article_number_not_confirmed')
     sufficient = false
   }

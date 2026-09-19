@@ -20,11 +20,13 @@ import {
   statuteDetailSelector,
 } from '../server/retrieval/yuandian/adapter.mjs'
 import {
+  canonicalizeArticleNumber,
   canonicalizeLegalTitle,
   classifyYuandianSearchPayload,
   detailRecord,
   mapYuandianSourceType,
   readYuandianPayload,
+  sameArticleNumber,
   sameLegalTitle,
   searchCandidates,
 } from '../server/retrieval/yuandian/normalize.mjs'
@@ -1205,6 +1207,61 @@ test('tool allowlist rejects yuandian-case before session creation', async () =>
     (error) => error.code === 'invalid_request' && error.retryable === false,
   )
   assert.equal(factoryCalls(), 0)
+})
+
+test('national-prefix and book-title variants identify the same labor law', () => {
+  assert.equal(sameLegalTitle('中华人民共和国劳动法', '《中华人民共和国劳动法》'), true)
+  assert.equal(sameLegalTitle('中华人民共和国劳动法', '劳动法'), true)
+  assert.equal(sameLegalTitle('中华人民共和国劳动法', '《劳动法》'), true)
+})
+
+test('promulgation notice wrapper identifies its exact embedded regulation', () => {
+  const notice = '劳动部关于颁发《未成年工特殊保护规定》的通知'
+  assert.equal(canonicalizeLegalTitle(notice), '未成年工特殊保护规定')
+  assert.equal(sameLegalTitle(notice, '未成年工特殊保护规定'), true)
+  assert.equal(sameLegalTitle(notice, '未成年工保护规定'), false)
+})
+
+test('similar labor instruments do not match after conservative title normalization', () => {
+  assert.equal(sameLegalTitle('中华人民共和国劳动法', '劳动合同法'), false)
+  assert.equal(sameLegalTitle('劳动法', '劳动法实施条例'), false)
+})
+
+test('article number canonicalization equates Chinese and Arabic numerals conservatively', () => {
+  assert.equal(canonicalizeArticleNumber('第十五条'), 'article:15')
+  assert.equal(sameArticleNumber('第15条', '第十五条'), true)
+  assert.equal(sameArticleNumber('第58条', '第五十八条'), true)
+  assert.equal(sameArticleNumber('15', '15条'), true)
+  assert.equal(sameArticleNumber('第2款', '第二款'), true)
+  assert.equal(sameArticleNumber('第2项', '第二项'), true)
+  assert.equal(sameArticleNumber('第十五条第二款第一项', '第15条第2款第1项'), true)
+  assert.equal(sameArticleNumber('第15条', '第16条'), false)
+  assert.equal(sameArticleNumber('第2款', '第2项'), false)
+})
+
+test('article detail accepts equivalent Chinese and Arabic article numbers', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail', result: articleDetail({ ftnum: '第十五条' }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-article-canonical', kind: 'article_text', text: '合成法条',
+    knownSourceTitle: '中华人民共和国劳动合同法', knownArticleNumber: '第15条',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.equal(result.warnings.includes('article_number_not_confirmed'), false)
+})
+
+test('missing authority remains insufficient when the authority gate was not implicated', async () => {
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail', result: articleDetail({ xljb: undefined }),
+  }])
+  const result = await adapter.retrieve({
+    claimId: 'claim-missing-authority', kind: 'article_text', text: '合成法条',
+    knownSourceTitle: '中华人民共和国劳动合同法', knownArticleNumber: '第十条',
+  })
+  assert.equal(result.status, 'insufficient_evidence')
+  assert.ok(result.warnings.includes('authority_not_confirmed'))
+  assert.deepEqual(result.evidence, [])
 })
 
 test('safe telemetry records routing without raw claim, provider body, or record id', async () => {
