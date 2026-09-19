@@ -11,6 +11,15 @@ import {
   normalizeYuandianDetail,
   readYuandianPayload,
 } from './normalize.mjs'
+import {
+  createSafeRetrievalTelemetry,
+  finalizeSafeRetrievalTelemetry,
+  recordTelemetryProviderCall,
+  recordTelemetryRoute,
+  safeDetailTelemetry,
+  safeSearchCandidateTelemetry,
+  updateLastTelemetryProviderCall,
+} from '../telemetry.mjs'
 
 export const MAX_PROVIDER_CALLS_PER_CLAIM = 3
 export const KEYWORD_SEARCH_DEFAULT_TOP_K = 5
@@ -72,7 +81,7 @@ function resultForError(claimId, error) {
 }
 
 export class YuandianRetrievalAdapter {
-  constructor({ client, maxProviderCalls = MAX_PROVIDER_CALLS_PER_CLAIM, now = () => new Date() }) {
+  constructor({ client, maxProviderCalls = MAX_PROVIDER_CALLS_PER_CLAIM, now = () => new Date(), telemetrySink }) {
     if (!client) throw new TypeError('client is required')
     if (!Number.isSafeInteger(maxProviderCalls) || maxProviderCalls < 1 || maxProviderCalls > 4) {
       throw new TypeError('maxProviderCalls must be between 1 and 4')
@@ -80,20 +89,38 @@ export class YuandianRetrievalAdapter {
     this.client = client
     this.maxProviderCalls = maxProviderCalls
     this.now = now
+    this.telemetrySink = telemetrySink
   }
 
   async #call(context, toolName, args) {
     if (context.calls >= this.maxProviderCalls) throw new ProviderCallBudgetError()
     context.calls += 1
-    return this.client.callTool(toolName, args)
+    recordTelemetryProviderCall(context.telemetry, {
+      tool: toolName, status: 'ok', resultKind: 'response_received',
+    })
+    try {
+      return await this.client.callTool(toolName, args)
+    } catch (error) {
+      const normalized = normalizeProviderError(error)
+      updateLastTelemetryProviderCall(context.telemetry, {
+        status: normalized.code, resultKind: 'error',
+      })
+      throw error
+    }
   }
 
   async #searchThenDetail(context, claim, searchTool, searchArgs, detailTool) {
     const searchResult = await this.#call(context, searchTool, searchArgs)
     const classified = classifyYuandianSearchPayload(readYuandianPayload(searchResult))
+    updateLastTelemetryProviderCall(context.telemetry, {
+      resultKind: classified.kind,
+      candidateCount: classified.candidates.length,
+    })
+    context.telemetry.searchCandidates = safeSearchCandidateTelemetry(classified.candidates)
     if (classified.kind === 'not_found') return { notFound: true }
     const candidate = classified.candidates[0]
     if (!candidate) return { notFound: true }
+    context.telemetry.selectedCandidateRank = 1
     const selectorCandidate = candidateForSelector(candidate, searchTool)
     const detailResult = await this.#call(
       context,
@@ -107,6 +134,7 @@ export class YuandianRetrievalAdapter {
     const knownArticle = claim.knownSourceTitle && claim.knownArticleNumber
     if (knownArticle && ['article_text', 'article_number'].includes(claim.kind)) {
       const detailTool = YUANDIAN_LAW_TOOLS.ARTICLE_DETAIL
+      recordTelemetryRoute(context.telemetry, 'direct_article_detail', undefined, detailTool)
       const detailResult = await this.#call(context, detailTool, withDetailReferDate(claim, detailTool, {
         fgmc: claim.knownSourceTitle,
         ftnum: claim.knownArticleNumber,
@@ -117,6 +145,12 @@ export class YuandianRetrievalAdapter {
     if (claim.knownSourceTitle && [
       'statute_identity', 'legal_status', 'effective_date', 'historical_version', 'jurisdiction',
     ].includes(claim.kind)) {
+      recordTelemetryRoute(
+        context.telemetry,
+        'statute_search_detail',
+        YUANDIAN_LAW_TOOLS.STATUTE_SEARCH,
+        YUANDIAN_LAW_TOOLS.STATUTE_DETAIL,
+      )
       return this.#searchThenDetail(
         context,
         claim,
@@ -127,6 +161,12 @@ export class YuandianRetrievalAdapter {
     }
 
     if (['article_text', 'article_number'].includes(claim.kind)) {
+      recordTelemetryRoute(
+        context.telemetry,
+        'article_search_detail',
+        YUANDIAN_LAW_TOOLS.ARTICLE_SEARCH,
+        YUANDIAN_LAW_TOOLS.ARTICLE_DETAIL,
+      )
       return this.#searchThenDetail(
         context,
         claim,
@@ -141,6 +181,12 @@ export class YuandianRetrievalAdapter {
     }
 
     if (claim.kind === 'statute_identity') {
+      recordTelemetryRoute(
+        context.telemetry,
+        'statute_search_detail',
+        YUANDIAN_LAW_TOOLS.STATUTE_SEARCH,
+        YUANDIAN_LAW_TOOLS.STATUTE_DETAIL,
+      )
       return this.#searchThenDetail(
         context,
         claim,
@@ -150,6 +196,12 @@ export class YuandianRetrievalAdapter {
       )
     }
 
+    recordTelemetryRoute(
+      context.telemetry,
+      'vector_search_detail',
+      YUANDIAN_LAW_TOOLS.VECTOR_SEARCH,
+      YUANDIAN_LAW_TOOLS.ARTICLE_DETAIL,
+    )
     return this.#searchThenDetail(
       context,
       claim,
@@ -157,6 +209,16 @@ export class YuandianRetrievalAdapter {
       { query: claim.text, return_num: VECTOR_SEARCH_DEFAULT_RETURN_NUM },
       YUANDIAN_LAW_TOOLS.ARTICLE_DETAIL,
     )
+  }
+
+  async #finish(telemetry, result, normalized) {
+    finalizeSafeRetrievalTelemetry(telemetry, result, normalized)
+    try {
+      await this.telemetrySink?.record?.(telemetry)
+    } catch {
+      // Retrieval remains available if optional diagnostics cannot be persisted.
+    }
+    return result
   }
 
   async retrieve(input) {
@@ -170,17 +232,29 @@ export class YuandianRetrievalAdapter {
       })
     }
 
+    const telemetry = createSafeRetrievalTelemetry(claim, this.now().toISOString())
     const status = this.client.getStatus?.()
     if (status && !status.configured) {
-      return resultForError(claim.claimId, new RetrievalProviderError('missing_api_key'))
+      return this.#finish(
+        telemetry,
+        resultForError(claim.claimId, new RetrievalProviderError('missing_api_key')),
+      )
     }
 
-    const context = { calls: 0 }
+    const context = { calls: 0, telemetry }
     try {
       const routed = await this.#route(context, claim)
-      if (routed.notFound) return createRetrievalResult(claim.claimId, { status: 'not_found' })
+      if (routed.notFound) {
+        return this.#finish(telemetry, createRetrievalResult(claim.claimId, { status: 'not_found' }))
+      }
       const record = detailRecord(readYuandianPayload(routed.detailResult))
-      if (!record) return createRetrievalResult(claim.claimId, { status: 'not_found' })
+      telemetry.detail = safeDetailTelemetry(record)
+      updateLastTelemetryProviderCall(telemetry, {
+        resultKind: record ? 'detail_record' : 'not_found',
+      })
+      if (!record) {
+        return this.#finish(telemetry, createRetrievalResult(claim.claimId, { status: 'not_found' }))
+      }
 
       const normalized = normalizeYuandianDetail({
         claim,
@@ -190,26 +264,26 @@ export class YuandianRetrievalAdapter {
         retrievedAt: this.now().toISOString(),
       })
       if (!normalized.sufficient) {
-        return createRetrievalResult(claim.claimId, {
+        return this.#finish(telemetry, createRetrievalResult(claim.claimId, {
           status: 'insufficient_evidence',
           provenance: normalized.provenance,
           warnings: normalized.warnings,
-        })
+        }), normalized)
       }
-      return createRetrievalResult(claim.claimId, {
+      return this.#finish(telemetry, createRetrievalResult(claim.claimId, {
         status: 'evidence_found',
         evidence: [normalized.evidence],
         provenance: normalized.provenance,
         warnings: normalized.warnings,
-      })
+      }), normalized)
     } catch (error) {
       if (error instanceof ProviderCallBudgetError) {
-        return createRetrievalResult(claim.claimId, {
+        return this.#finish(telemetry, createRetrievalResult(claim.claimId, {
           status: 'insufficient_evidence',
           warnings: ['provider_call_budget_exhausted'],
-        })
+        }))
       }
-      return resultForError(claim.claimId, error)
+      return this.#finish(telemetry, resultForError(claim.claimId, error))
     }
   }
 

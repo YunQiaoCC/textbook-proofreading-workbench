@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 
 import { strict as assert } from 'node:assert'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import {
+  FileBackedRetrievalTelemetry,
   KEYWORD_SEARCH_DEFAULT_TOP_K,
   VECTOR_SEARCH_DEFAULT_RETURN_NUM,
   YUANDIAN_TOOL_CONTRACTS,
@@ -201,6 +205,7 @@ function harness(steps, options = {}) {
     client,
     maxProviderCalls: options.maxProviderCalls,
     now: () => NOW,
+    telemetrySink: options.telemetrySink,
   })
   return { session, client, adapter, factoryCalls: () => factoryCalls }
 }
@@ -1200,6 +1205,61 @@ test('tool allowlist rejects yuandian-case before session creation', async () =>
     (error) => error.code === 'invalid_request' && error.retryable === false,
   )
   assert.equal(factoryCalls(), 0)
+})
+
+test('safe telemetry records routing without raw claim, provider body, or record id', async () => {
+  const records = []
+  const rawClaim = 'SYNTHETIC CLAIM TEXT THAT MUST BE HASHED'
+  const rawBody = 'SYNTHETIC PROVIDER BODY THAT MUST NOT BE STORED'
+  const rawRecordId = 'private-provider-record-id'
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail',
+    result: articleDetail({ id: rawRecordId, ftnr: rawBody }),
+  }], { telemetrySink: { record: async (record) => records.push(structuredClone(record)) } })
+  const result = await adapter.retrieve({
+    claimId: 'claim-safe-telemetry', kind: 'article_text', text: rawClaim,
+    knownSourceTitle: '中华人民共和国劳动合同法', knownArticleNumber: '第十条',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.equal(records.length, 1)
+  const telemetry = records[0]
+  assert.equal(telemetry.routing.route, 'direct_article_detail')
+  assert.equal(telemetry.providerCallCount, 1)
+  assert.equal(telemetry.providerCalls[0].resultKind, 'detail_record')
+  assert.equal(telemetry.detail.detailRecordFound, true)
+  assert.equal(telemetry.normalization.finalStatus, 'evidence_found')
+  assert.equal(telemetry.claim.claimTextLength, rawClaim.length)
+  assert.match(telemetry.claim.claimTextSha256, /^[a-f0-9]{64}$/u)
+  const serialized = JSON.stringify(telemetry)
+  for (const forbidden of [rawClaim, rawBody, rawRecordId, SECRET]) {
+    assert.equal(serialized.includes(forbidden), false)
+  }
+})
+
+test('file-backed safe telemetry survives sink restart with bounded JSON records', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'retrieval-telemetry-'))
+  try {
+    const first = new FileBackedRetrievalTelemetry(root)
+    await first.init()
+    const { adapter } = harness([{
+      tool: 'yuandian_rh_ft_detail', result: articleDetail(),
+    }], { telemetrySink: first })
+    await adapter.retrieve({
+      claimId: 'claim-persistent-telemetry', kind: 'article_text', text: 'PERSISTENT CLAIM',
+      knownSourceTitle: '中华人民共和国劳动合同法', knownArticleNumber: '第十条',
+    })
+    const second = new FileBackedRetrievalTelemetry(root)
+    await second.init()
+    assert.equal(second.fileCount, 1)
+    const dayRoot = path.join(root, 'metadata', 'retrieval-telemetry', '2026-09-12')
+    const files = await readdir(dayRoot)
+    assert.equal(files.length, 1)
+    const stored = JSON.parse(await readFile(path.join(dayRoot, files[0]), 'utf8'))
+    assert.equal(stored.normalization.finalStatus, 'evidence_found')
+    assert.equal(JSON.stringify(stored).includes('PERSISTENT CLAIM'), false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 let passed = 0

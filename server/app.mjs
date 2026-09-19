@@ -27,6 +27,7 @@ import { ChapterTextBundleBuilder } from './ai/chapterTextBundleBuilder.mjs'
 import { AiReviewRuntimeService } from './ai/aiReviewRuntimeService.mjs'
 import { YuandianMcpClient } from './retrieval/yuandian/client.mjs'
 import { YuandianRetrievalAdapter } from './retrieval/yuandian/adapter.mjs'
+import { FileBackedRetrievalTelemetry } from './retrieval/telemetry.mjs'
 
 const MAX_JSON_BODY = 64 * 1024
 
@@ -548,7 +549,12 @@ export async function createIngestionServer(options = {}) {
   })
   const modelClient = options.modelClient ?? new DeepSeekResponsesClient(options.deepSeekOptions)
   const yuandianClient = options.yuandianClient ?? new YuandianMcpClient(options.yuandianOptions)
-  const retrievalAdapter = options.retrievalAdapter ?? new YuandianRetrievalAdapter({ client: yuandianClient })
+  const retrievalTelemetry = options.retrievalTelemetry ?? new FileBackedRetrievalTelemetry(config.storageRoot)
+  await retrievalTelemetry.init()
+  const retrievalAdapter = options.retrievalAdapter ?? new YuandianRetrievalAdapter({
+    client: yuandianClient,
+    telemetrySink: retrievalTelemetry,
+  })
   const bundleBuilder = options.bundleBuilder ?? new ChapterTextBundleBuilder({ documentRepository, textRepository })
   const aiReviewRuntimeService = new AiReviewRuntimeService({
     aiReviewService,
@@ -646,6 +652,7 @@ export async function createIngestionServer(options = {}) {
     aiReviewService,
     aiCandidateOverlayService,
     aiReviewRuntimeService,
+    retrievalTelemetry,
     proofreadingRepository,
     proofreadingService,
     textRepository,

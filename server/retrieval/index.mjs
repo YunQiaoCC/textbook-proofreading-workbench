@@ -30,3 +30,8 @@ export {
   YUANDIAN_TOOL_CONTRACTS,
   validateYuandianRuntimeSchema,
 } from './yuandian/tool-contracts.mjs'
+export {
+  FileBackedRetrievalTelemetry,
+  MAX_RETRIEVAL_TELEMETRY_BYTES,
+  MAX_RETRIEVAL_TELEMETRY_FILES,
+} from './telemetry.mjs'
