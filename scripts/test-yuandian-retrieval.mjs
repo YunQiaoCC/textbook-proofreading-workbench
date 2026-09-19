@@ -1284,11 +1284,50 @@ test('safe telemetry records routing without raw claim, provider body, or record
   assert.equal(telemetry.providerCallCount, 1)
   assert.equal(telemetry.providerCalls[0].resultKind, 'detail_record')
   assert.equal(telemetry.detail.detailRecordFound, true)
+  assert.deepEqual(telemetry.detail.responseShape.topLevelKeys, ['data'])
+  assert.equal(telemetry.detail.responseShape.dataType, 'object')
   assert.equal(telemetry.normalization.finalStatus, 'evidence_found')
   assert.equal(telemetry.claim.claimTextLength, rawClaim.length)
   assert.match(telemetry.claim.claimTextSha256, /^[a-f0-9]{64}$/u)
   const serialized = JSON.stringify(telemetry)
   for (const forbidden of [rawClaim, rawBody, rawRecordId, SECRET]) {
+    assert.equal(serialized.includes(forbidden), false)
+  }
+})
+
+test('unsupported detail telemetry records only safe shape and normalized error', async () => {
+  const records = []
+  const rawMessage = 'PRIVATE PROVIDER MESSAGE MUST NOT BE STORED'
+  const rawBody = 'PRIVATE DETAIL BODY MUST NOT BE STORED'
+  const rawRecordId = 'PRIVATE DETAIL RECORD ID MUST NOT BE STORED'
+  const response = mcp({
+    ok: false,
+    status: 404,
+    message: rawMessage,
+    data: {
+      status: 'missing', message: rawMessage, opaque: { content: rawBody, id: rawRecordId },
+    },
+    normalized: { hasItems: false, items: [] },
+  })
+  const { adapter } = harness([{
+    tool: 'yuandian_rh_ft_detail', result: response,
+  }], { telemetrySink: { record: async (record) => records.push(structuredClone(record)) } })
+  const result = await adapter.retrieve({
+    claimId: 'claim-unsupported-shape-telemetry', kind: 'article_text', text: 'SAFE CLAIM',
+    knownSourceTitle: '合成法律', knownArticleNumber: '第五十三条',
+  })
+  assert.equal(result.status, 'provider_error')
+  assert.equal(records.length, 1)
+  const telemetry = records[0]
+  assert.equal(telemetry.detail.detailRecordFound, false)
+  assert.deepEqual(telemetry.detail.responseShape.topLevelKeys, ['data', 'message', 'normalized', 'ok', 'status'])
+  assert.equal(telemetry.detail.responseShape.messageLength, rawMessage.length)
+  assert.match(telemetry.detail.responseShape.payloadShapeSha256, /^[a-f0-9]{64}$/u)
+  assert.deepEqual(telemetry.error, {
+    code: 'provider_error', providerCode: 'unsupported_response_shape', retryable: false,
+  })
+  const serialized = JSON.stringify(telemetry)
+  for (const forbidden of [rawMessage, rawBody, rawRecordId]) {
     assert.equal(serialized.includes(forbidden), false)
   }
 })

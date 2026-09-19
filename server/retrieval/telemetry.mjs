@@ -12,6 +12,8 @@ const MAX_IDENTIFIER_LENGTH = 160
 const MAX_VALUE_LENGTH = 256
 const MAX_WARNING_COUNT = 16
 const MAX_WARNING_LENGTH = 128
+const MAX_SHAPE_KEYS = 32
+const MAX_SHAPE_KEY_LENGTH = 64
 
 function limited(value, maxLength = MAX_VALUE_LENGTH) {
   if (typeof value !== 'string') return undefined
@@ -34,6 +36,59 @@ function sha256(value) {
 
 function compact(record) {
   return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined))
+}
+
+function valueType(value) {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'array'
+  return typeof value
+}
+
+function safeKeys(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  return Object.keys(value)
+    .sort()
+    .slice(0, MAX_SHAPE_KEYS)
+    .map((key) => key.slice(0, MAX_SHAPE_KEY_LENGTH))
+}
+
+export function safeYuandianPayloadShape(payload) {
+  const object = Boolean(payload) && typeof payload === 'object' && !Array.isArray(payload)
+  const topLevelKeys = safeKeys(payload)
+  const dataPresent = object && Object.hasOwn(payload, 'data')
+  const data = dataPresent ? payload.data : undefined
+  const dataObject = Boolean(data) && typeof data === 'object' && !Array.isArray(data)
+  const nestedDataPresent = dataObject && Object.hasOwn(data, 'data')
+  const nestedData = nestedDataPresent ? data.data : undefined
+  const normalizedPresent = object && Object.hasOwn(payload, 'normalized')
+  const normalized = normalizedPresent ? payload.normalized : undefined
+  const okFieldPresent = object && Object.hasOwn(payload, 'ok')
+  const statusFieldPresent = object && Object.hasOwn(payload, 'status')
+  const messageFieldPresent = object && Object.hasOwn(payload, 'message')
+  const shape = {
+    topLevelKeys,
+    topLevelValueTypes: Object.fromEntries(topLevelKeys.map((key) => [key, valueType(payload[key])])),
+    dataPresent,
+    dataType: dataPresent ? valueType(data) : 'absent',
+    dataKeys: safeKeys(data),
+    nestedDataPresent,
+    nestedDataType: nestedDataPresent ? valueType(nestedData) : 'absent',
+    nestedDataKeys: safeKeys(nestedData),
+    normalizedPresent,
+    normalizedKeys: safeKeys(normalized),
+    okFieldPresent,
+    okValueType: okFieldPresent ? valueType(payload.ok) : 'absent',
+    statusFieldPresent,
+    statusValueType: statusFieldPresent ? valueType(payload.status) : 'absent',
+    messageFieldPresent,
+    messageLength: messageFieldPresent && typeof payload.message === 'string'
+      ? payload.message.length
+      : 0,
+  }
+  return {
+    ...shape,
+    payloadShapeSha256: createHash('sha256').update(JSON.stringify(shape), 'utf8').digest('hex'),
+  }
 }
 
 export function createSafeRetrievalTelemetry(claim, recordedAt) {
@@ -130,6 +185,10 @@ export function safeDetailTelemetry(record) {
   })
 }
 
+export function recordDetailResponseShape(telemetry, payload) {
+  telemetry.detail.responseShape = safeYuandianPayloadShape(payload)
+}
+
 export function finalizeSafeRetrievalTelemetry(telemetry, result, normalized) {
   telemetry.normalization = {
     sufficient: Boolean(normalized?.sufficient),
@@ -138,6 +197,13 @@ export function finalizeSafeRetrievalTelemetry(telemetry, result, normalized) {
       .slice(0, MAX_WARNING_COUNT)
       .map((warning) => warning.slice(0, MAX_WARNING_LENGTH)),
     finalStatus: limited(result?.status, 64) ?? 'provider_error',
+  }
+  if (result?.error) {
+    telemetry.error = compact({
+      code: limited(result.error.code, 64),
+      providerCode: limited(result.error.providerCode, 128),
+      retryable: typeof result.error.retryable === 'boolean' ? result.error.retryable : undefined,
+    })
   }
   return telemetry
 }

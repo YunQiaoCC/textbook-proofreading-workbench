@@ -14,6 +14,7 @@ import {
 import {
   createSafeRetrievalTelemetry,
   finalizeSafeRetrievalTelemetry,
+  recordDetailResponseShape,
   recordTelemetryProviderCall,
   recordTelemetryRoute,
   safeDetailTelemetry,
@@ -247,8 +248,10 @@ export class YuandianRetrievalAdapter {
       if (routed.notFound) {
         return this.#finish(telemetry, createRetrievalResult(claim.claimId, { status: 'not_found' }))
       }
-      const record = detailRecord(readYuandianPayload(routed.detailResult))
-      telemetry.detail = safeDetailTelemetry(record)
+      const detailPayload = readYuandianPayload(routed.detailResult)
+      recordDetailResponseShape(telemetry, detailPayload)
+      const record = detailRecord(detailPayload)
+      telemetry.detail = { ...telemetry.detail, ...safeDetailTelemetry(record) }
       updateLastTelemetryProviderCall(telemetry, {
         resultKind: record ? 'detail_record' : 'not_found',
       })
