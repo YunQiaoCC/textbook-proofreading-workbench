@@ -33,6 +33,8 @@ Distinguish these outcomes:
 
 At Stage 1, which has no `verificationStatus`, preserve this distinction through `reasonDraft`, `humanReviewNote`, and conservative issue classification. Do not suppress a useful finding merely because visual input is unavailable.
 
+For citation-marker placement, extracted text may support a static candidate when it clearly preserves the order of body text, punctuation, and marker and `extractionReliability=high`. Even then, describe the placement as suspected rather than visually confirmed when rendered-page evidence is unavailable. If the marker is a separate block, punctuation and marker cross a block boundary, superscript extraction is missing or reordered, `extractionReliability=low`, or citation scope is unclear, do not use `confirmed_error`. Emit an `ambiguous` or `likely_error` candidate only when the location remains concrete and useful, and set `verificationStatus=manual_check_required` when page inspection is needed. Use the marker-specific note: `需回看 PDF 页面确认引注符号与标点的实际位置及引用范围，可能受文本提取或版面映射影响。`
+
 ## Choosing a judgement
 
 - `confirmed_error`: use only when the text is reliable and the error is established without pretending missing verification occurred.

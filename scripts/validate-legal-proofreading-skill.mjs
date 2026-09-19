@@ -208,8 +208,11 @@ for (const golden of goldenEntries) {
 
   const forbidden = golden.forbidden ?? {}
   if ((forbidden.issueTypes ?? []).includes(issue.issueType)) fail(`${golden.caseId}: expected issue uses forbidden issueType`)
+  if ((forbidden.ruleTypes ?? []).includes(issue.ruleType)) fail(`${golden.caseId}: expected issue uses forbidden ruleType`)
   if ((forbidden.forbiddenJudgements ?? []).includes(issue.judgement)) fail(`${golden.caseId}: expected issue uses forbidden judgement`)
   if ((forbidden.verificationStatuses ?? []).includes(issue.verificationStatus)) fail(`${golden.caseId}: expected issue uses forbidden verificationStatus`)
+  if ((forbidden.retrievalRequired ?? []).includes(issue.retrievalRequired)) fail(`${golden.caseId}: expected issue uses forbidden retrievalRequired`)
+  if ((forbidden.confidence ?? []).includes(issue.confidence)) fail(`${golden.caseId}: expected issue uses forbidden confidence`)
   if (issue.jurisdictionScope && (forbidden.jurisdictionScopes ?? []).includes(issue.jurisdictionScope)) {
     fail(`${golden.caseId}: expected issue uses forbidden jurisdictionScope`)
   }
@@ -312,6 +315,86 @@ if (goldenById.get('26-normal-language-negative')?.expected?.issueExpected !== f
   fail('26-normal-language-negative: ordinary correct text must emit no issue')
 }
 
+const citationMarkerCaseIds = [
+  '27-citation-whole-sentence-correct',
+  '28-citation-whole-sentence-wrong',
+  '29-citation-question-correct',
+  '30-citation-question-wrong',
+  '31-citation-partial-sentence-correct',
+  '32-citation-partial-sentence-wrong',
+  '33-citation-quoted-term-correct',
+  '34-citation-quoted-term-wrong',
+  '35-citation-scope-ambiguous',
+  '36-citation-extraction-order-uncertain',
+  '37-ordinary-footnote-placement-correct',
+  '38-bibliography-identity-not-static',
+]
+for (const caseId of citationMarkerCaseIds) {
+  if (!caseById.has(caseId) || !goldenById.has(caseId)) fail(`missing citation-marker regression ${caseId}`)
+}
+
+const citationMarkerNegativeIds = [
+  '27-citation-whole-sentence-correct',
+  '29-citation-question-correct',
+  '31-citation-partial-sentence-correct',
+  '33-citation-quoted-term-correct',
+  '35-citation-scope-ambiguous',
+  '37-ordinary-footnote-placement-correct',
+  '38-bibliography-identity-not-static',
+]
+for (const caseId of citationMarkerNegativeIds) {
+  if (goldenById.get(caseId)?.expected?.issueExpected !== false) {
+    fail(`${caseId}: citation-marker false-positive guard must emit no issue`)
+  }
+}
+
+for (const caseId of [
+  '28-citation-whole-sentence-wrong',
+  '30-citation-question-wrong',
+  '32-citation-partial-sentence-wrong',
+  '34-citation-quoted-term-wrong',
+]) {
+  const expected = goldenById.get(caseId)?.expected
+  const issue = expected?.expectedIssue
+  if (
+    expected?.issueExpected !== true ||
+    issue?.issueType !== 'citation' ||
+    issue?.ruleType !== 'static' ||
+    issue?.verificationStatus !== 'not_required' ||
+    issue?.retrievalRequired !== 'no' ||
+    issue?.judgement !== 'likely_error' ||
+    issue?.confidence !== 'medium'
+  ) {
+    fail(`${caseId}: clear citation-marker placement finding must use the conservative static/no-retrieval classification`)
+  }
+}
+
+const uncertainCitationMarker = goldenById.get('36-citation-extraction-order-uncertain')?.expected?.expectedIssue
+if (
+  uncertainCitationMarker?.issueType !== 'citation' ||
+  uncertainCitationMarker?.ruleType !== 'static' ||
+  uncertainCitationMarker?.extractionReliability !== 'low' ||
+  uncertainCitationMarker?.verificationStatus !== 'manual_check_required' ||
+  uncertainCitationMarker?.retrievalRequired !== 'no' ||
+  uncertainCitationMarker?.judgement === 'confirmed_error' ||
+  uncertainCitationMarker?.confidence === 'high' ||
+  uncertainCitationMarker?.humanReviewNote !== '需回看 PDF 页面确认引注符号与标点的实际位置及引用范围，可能受文本提取或版面映射影响。'
+) {
+  fail('36-citation-extraction-order-uncertain: extraction uncertainty must preserve the visual limitation and forbid confirmed_error')
+}
+
+const citationPolicy = readFileSync(path.join(skillRoot, 'citation_policy.md'), 'utf8')
+for (const requiredText of [
+  '## Citation marker placement',
+  '**Whole-sentence citation.**',
+  '**Partial-sentence citation.**',
+  '**Term or direct-quotation citation.**',
+  '`ruleType=static`',
+  '`retrievalRequired=no`',
+]) {
+  if (!citationPolicy.includes(requiredText)) fail(`citation_policy.md: missing ${requiredText}`)
+}
+
 if (failures.length > 0) {
   console.error(`Legal proofreading skill validation FAILED (${failures.length})`)
   failures.forEach((message) => console.error(`- ${message}`))
@@ -328,5 +411,7 @@ if (failures.length > 0) {
   console.log('DASH_ANOMALY_RECALL=PASS')
   console.log('DUPLICATE_TEXT_RECALL=PASS')
   console.log('NORMAL_TEXT_NO_ISSUE=PASS')
+  console.log('CITATION_MARKER_EVAL=PASS')
+  console.log('CITATION_MARKER_FALSE_POSITIVE_GUARD=PASS')
   console.log('External calls: none')
 }

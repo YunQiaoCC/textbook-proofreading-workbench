@@ -32,6 +32,8 @@ Check commencement, amendment, repeal, supersession, transition rules, and old/n
 
 Separate case existence, docket/citation accuracy, actual holding, claimed proposition, and any special official status. Check data provenance and whether a citation supports the stated conclusion.
 
+Check citation-marker punctuation placement under [citation_policy.md](citation_policy.md): whole-sentence markers follow sentence-final punctuation, while markers for a local proposition, term, or direct quotation immediately follow the supported material and precede subsequent punctuation. Treat this as a project editorial `static` rule with no retrieval, and do not infer an error until citation scope is reasonably clear.
+
 ### Pass F: Cross-chapter consistency
 
 Compare repeated concepts, sources, cases, data, and conclusions. Do not report a difference that is justified by time, jurisdiction, audience level, or a stated change in analytical frame.

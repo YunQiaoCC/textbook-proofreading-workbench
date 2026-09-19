@@ -514,6 +514,186 @@
     "caseId": "26-normal-language-negative",
     "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
     "forbidden": { "issueTypes": ["typo", "punctuation", "wording", "format"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "27-citation-whole-sentence-correct",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["citation", "punctuation", "format"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "28-citation-whole-sentence-wrong",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_2121208adbad1da8",
+        "documentId": "doc-synth-002",
+        "chapterId": "ch-01",
+        "pdfPage": 12,
+        "blockId": "blk-012-01",
+        "originalText": "劳动合同应当依法订立[1]。",
+        "issueType": "citation",
+        "ruleType": "static",
+        "severity": "minor",
+        "extractionReliability": "high",
+        "verificationStatus": "not_required",
+        "retrievalRequired": "no",
+        "evidence": [],
+        "judgement": "likely_error",
+        "suggestion": "如引注支持整个句子，将引注符号移至句号之后。",
+        "reason": "该引注的范围为完整句子，但引注符号位于句末标点之前，不符合本项目的引注排版规则。",
+        "confidence": "medium",
+        "humanReviewNote": "需回看 PDF 页面确认引注符号与标点的实际位置及引用范围，可能受文本提取或版面映射影响。",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified", "unverified", "insufficient_evidence"], "issueTypes": ["legal_source_mismatch", "punctuation", "format"], "forbiddenJudgements": ["confirmed_error"], "retrievalRequired": ["must", "should"] }
+  },
+  {
+    "caseId": "29-citation-question-correct",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["citation", "punctuation", "format"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "30-citation-question-wrong",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_dc25cc2e2eee8c91",
+        "documentId": "doc-synth-002",
+        "chapterId": "ch-01",
+        "pdfPage": 14,
+        "blockId": "blk-014-01",
+        "originalText": "何谓劳动关系[2]？",
+        "issueType": "citation",
+        "ruleType": "static",
+        "severity": "minor",
+        "extractionReliability": "high",
+        "verificationStatus": "not_required",
+        "retrievalRequired": "no",
+        "evidence": [],
+        "judgement": "likely_error",
+        "suggestion": "如引注支持整个问句，将引注符号移至问号之后。",
+        "reason": "该引注的范围为完整问句，但引注符号位于问号之前，不符合本项目的引注排版规则。",
+        "confidence": "medium",
+        "humanReviewNote": "需回看 PDF 页面确认引注符号与标点的实际位置及引用范围，可能受文本提取或版面映射影响。",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified", "unverified", "insufficient_evidence"], "issueTypes": ["legal_source_mismatch", "punctuation", "format"], "forbiddenJudgements": ["confirmed_error"], "retrievalRequired": ["must", "should"] }
+  },
+  {
+    "caseId": "31-citation-partial-sentence-correct",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["citation", "punctuation", "format"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "32-citation-partial-sentence-wrong",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_208995c90ddd605b",
+        "documentId": "doc-synth-002",
+        "chapterId": "ch-02",
+        "pdfPage": 22,
+        "blockId": "blk-022-01",
+        "originalText": "劳动关系具有从属性，[3]因此需要结合实际用工状态判断。",
+        "issueType": "citation",
+        "ruleType": "static",
+        "severity": "minor",
+        "extractionReliability": "high",
+        "verificationStatus": "not_required",
+        "retrievalRequired": "no",
+        "evidence": [],
+        "judgement": "likely_error",
+        "suggestion": "将引注符号移至其所支持的局部命题之后、逗号之前。",
+        "reason": "该引注仅支持逗号前的局部命题，却位于逗号之后，不符合本项目的引注排版规则。",
+        "confidence": "medium",
+        "humanReviewNote": "需回看 PDF 页面确认引注符号与标点的实际位置及引用范围，可能受文本提取或版面映射影响。",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified", "unverified", "insufficient_evidence"], "issueTypes": ["legal_source_mismatch", "punctuation", "format"], "forbiddenJudgements": ["confirmed_error"], "retrievalRequired": ["must", "should"] }
+  },
+  {
+    "caseId": "33-citation-quoted-term-correct",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["citation", "punctuation", "format"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "34-citation-quoted-term-wrong",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_5f279d409e9bb3e7",
+        "documentId": "doc-synth-002",
+        "chapterId": "ch-02",
+        "pdfPage": 24,
+        "blockId": "blk-024-01",
+        "originalText": "有学者将该特征概括为“从属性”，[4]并进一步展开讨论。",
+        "issueType": "citation",
+        "ruleType": "static",
+        "severity": "minor",
+        "extractionReliability": "high",
+        "verificationStatus": "not_required",
+        "retrievalRequired": "no",
+        "evidence": [],
+        "judgement": "likely_error",
+        "suggestion": "将引注符号移至右引号之后、逗号之前。",
+        "reason": "该引注仅支持引号中的词语，却位于右引号后的逗号之后，不符合本项目的引注排版规则。",
+        "confidence": "medium",
+        "humanReviewNote": "需回看 PDF 页面确认引注符号与标点的实际位置及引用范围，可能受文本提取或版面映射影响。",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified", "unverified", "insufficient_evidence"], "issueTypes": ["legal_source_mismatch", "punctuation", "format"], "forbiddenJudgements": ["confirmed_error"], "retrievalRequired": ["must", "should"] }
+  },
+  {
+    "caseId": "35-citation-scope-ambiguous",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["citation", "punctuation", "format"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "36-citation-extraction-order-uncertain",
+    "expected": {
+      "issueExpected": true,
+      "expectedIssue": {
+        "schemaVersion": "0.1",
+        "id": "ltp_6a70d58d12213fb1",
+        "documentId": "doc-synth-002",
+        "chapterId": "ch-03",
+        "pdfPage": 32,
+        "blockId": "blk-032-01",
+        "originalText": "劳动保障制度需要协调多方利益[6]。",
+        "issueType": "citation",
+        "ruleType": "static",
+        "severity": "minor",
+        "extractionReliability": "low",
+        "verificationStatus": "manual_check_required",
+        "retrievalRequired": "no",
+        "evidence": [],
+        "judgement": "ambiguous",
+        "suggestion": "回看 PDF 页面，确认引注符号与句号的实际先后位置及其引用范围。",
+        "reason": "提取结果呈现句末标点前的引注符号，但引注与标点跨文本块且阅读顺序不可靠，无法据此确认排版错误。",
+        "confidence": "low",
+        "humanReviewNote": "需回看 PDF 页面确认引注符号与标点的实际位置及引用范围，可能受文本提取或版面映射影响。",
+        "humanResolution": "pending"
+      }
+    },
+    "forbidden": { "verificationStatuses": ["verified", "not_required"], "issueTypes": ["legal_source_mismatch", "punctuation", "format"], "forbiddenJudgements": ["confirmed_error"], "confidence": ["high"], "retrievalRequired": ["must", "should"] }
+  },
+  {
+    "caseId": "37-ordinary-footnote-placement-correct",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["citation", "punctuation", "format"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
+  },
+  {
+    "caseId": "38-bibliography-identity-not-static",
+    "expected": { "issueExpected": false, "expectedIssue": null, "extractionReliability": "high" },
+    "forbidden": { "issueTypes": ["citation", "legal_source_mismatch", "punctuation", "format"], "ruleTypes": ["static"], "forbiddenJudgements": ["confirmed_error", "likely_error"] }
   }
 ]
 

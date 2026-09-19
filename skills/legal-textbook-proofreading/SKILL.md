@@ -46,7 +46,7 @@ Review the smallest meaningful passage plus enough neighboring text to identify 
 2. Establish current/historical/mixed context, jurisdiction, case status, and whether the passage states law or scholarship.
 3. Scan the review dimensions in [legal_rubric.md](legal_rubric.md); passes are dimensions, not model-call counts.
 4. Assign one `ruleType`, one controlled `issueType`, textbook-impact severity, and retrieval level.
-5. Apply [citation_policy.md](citation_policy.md) and [uncertainty_policy.md](uncertainty_policy.md).
+5. Apply [citation_policy.md](citation_policy.md) and [uncertainty_policy.md](uncertainty_policy.md). Citation-marker punctuation placement is a project editorial `static` rule: use `issueType=citation`, do not retrieve, and determine whether the marker supports the whole sentence or only local material before reporting it.
 6. Emit only if the candidate is locatable, explainable, actionable, and honest about verification.
 7. Validate against [schema/issue.schema.json](schema/issue.schema.json). Omit correct items.
 
