@@ -140,7 +140,7 @@ export class YuandianRetrievalAdapter {
         fgmc: claim.knownSourceTitle,
         ftnum: claim.knownArticleNumber,
       }))
-      return { detailResult, candidate: null, detailTool }
+      return { detailResult, candidate: null, detailTool, directArticle: true }
     }
 
     if (claim.knownSourceTitle && [
@@ -222,6 +222,38 @@ export class YuandianRetrievalAdapter {
     return result
   }
 
+  #readDetail(context, detailResult, shapeField = 'responseShape') {
+    const detailPayload = readYuandianPayload(detailResult)
+    recordDetailResponseShape(context.telemetry, detailPayload, shapeField)
+    const record = detailRecord(detailPayload)
+    updateLastTelemetryProviderCall(context.telemetry, {
+      resultKind: record ? 'detail_record' : 'not_found',
+    })
+    if (record) {
+      context.telemetry.detail = {
+        ...context.telemetry.detail,
+        ...safeDetailTelemetry(record),
+      }
+    }
+    return record
+  }
+
+  async #fallbackDirectArticle(context, claim) {
+    context.telemetry.fallbackTriggered = true
+    context.telemetry.routing.searchTool = YUANDIAN_LAW_TOOLS.ARTICLE_SEARCH
+    return this.#searchThenDetail(
+      context,
+      claim,
+      YUANDIAN_LAW_TOOLS.ARTICLE_SEARCH,
+      {
+        keyword: [claim.text, claim.knownArticleNumber].filter(Boolean).join(' '),
+        fgmc: claim.knownSourceTitle,
+        top_k: KEYWORD_SEARCH_DEFAULT_TOP_K,
+      },
+      YUANDIAN_LAW_TOOLS.ARTICLE_DETAIL,
+    )
+  }
+
   async retrieve(input) {
     let claim
     try {
@@ -244,17 +276,19 @@ export class YuandianRetrievalAdapter {
 
     const context = { calls: 0, telemetry }
     try {
-      const routed = await this.#route(context, claim)
+      let routed = await this.#route(context, claim)
       if (routed.notFound) {
         return this.#finish(telemetry, createRetrievalResult(claim.claimId, { status: 'not_found' }))
       }
-      const detailPayload = readYuandianPayload(routed.detailResult)
-      recordDetailResponseShape(telemetry, detailPayload)
-      const record = detailRecord(detailPayload)
-      telemetry.detail = { ...telemetry.detail, ...safeDetailTelemetry(record) }
-      updateLastTelemetryProviderCall(telemetry, {
-        resultKind: record ? 'detail_record' : 'not_found',
-      })
+      let record = this.#readDetail(context, routed.detailResult)
+      if (!record && routed.directArticle) {
+        const fallback = await this.#fallbackDirectArticle(context, claim)
+        if (fallback.notFound) {
+          return this.#finish(telemetry, createRetrievalResult(claim.claimId, { status: 'not_found' }))
+        }
+        routed = fallback
+        record = this.#readDetail(context, routed.detailResult, 'fallbackResponseShape')
+      }
       if (!record) {
         return this.#finish(telemetry, createRetrievalResult(claim.claimId, { status: 'not_found' }))
       }

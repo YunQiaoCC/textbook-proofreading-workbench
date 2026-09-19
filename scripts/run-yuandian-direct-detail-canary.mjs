@@ -30,13 +30,24 @@ try {
     temporalContext: 'current',
   })
   console.log(JSON.stringify({
+    directDetailStatus: captured.providerCalls[0]?.resultKind,
+    fallbackTriggered: captured.fallbackTriggered,
+    searchResultCount: captured.providerCalls[1]?.candidateCount ?? null,
+    selectedCandidateRank: captured.selectedCandidateRank,
+    selectedTitle: captured.searchCandidates.find((candidate) =>
+      candidate.rank === captured.selectedCandidateRank)?.normalizedTitle ?? null,
+    selectedArticleNumber: captured.searchCandidates.find((candidate) =>
+      candidate.rank === captured.selectedCandidateRank)?.articleNumber ?? null,
+    fallbackDetailFound: captured.detail.detailRecordFound,
+    normalizationSufficient: captured.normalization.sufficient,
+    normalizationWarnings: captured.normalization.warnings,
+    finalStatus: result.status,
+    providerCallCount: captured.providerCallCount,
     directDetailCallStatus: captured.providerCalls[0]?.status,
-    detailRecordFound: captured.detail.detailRecordFound,
     safeResponseShape: captured.detail.responseShape,
     normalizedErrorCode: captured.error?.code ?? null,
     normalizedProviderCode: captured.error?.providerCode ?? null,
     normalizedRetryable: captured.error?.retryable ?? null,
-    finalStatus: result.status,
   }))
 } finally {
   await adapter.close()

@@ -511,6 +511,11 @@ test('observed real not-found wrapper classifies and returns not_found', async (
   assert.equal(session.calls.length, 1)
 })
 
+test('observed real not-found wrapper is valid detail not_found', () => {
+  const payload = readYuandianPayload(observedNotFoundResponse())
+  assert.equal(detailRecord(payload), undefined)
+})
+
 test('normalized.items empty alone is insufficient for not_found', async () => {
   const { adapter } = harness([{
     tool: 'yuandian_rh_fg_search',
@@ -799,6 +804,69 @@ test('known article routes directly to article detail', async () => {
   assert.deepEqual(session.calls[0].request.arguments, {
     fgmc: '中华人民共和国劳动合同法', ftnum: '第十条',
   })
+})
+
+test('direct detail explicit not-found falls back and remains not_found when search is empty', async () => {
+  const { adapter, session } = harness([
+    { tool: 'yuandian_rh_ft_detail', result: observedNotFoundResponse() },
+    { tool: 'yuandian_rh_ft_search', result: observedNotFoundResponse() },
+  ])
+  const result = await adapter.retrieve({
+    claimId: 'claim-direct-not-found', kind: 'article_text', text: '合成第五十三条',
+    knownSourceTitle: '合成法律', knownArticleNumber: '第53条',
+  })
+  assert.equal(result.status, 'not_found')
+  assert.deepEqual(session.calls.map((call) => call.request.name), [
+    'yuandian_rh_ft_detail', 'yuandian_rh_ft_search',
+  ])
+})
+
+test('direct detail explicit not-found uses bounded search-detail fallback', async () => {
+  const records = []
+  const { adapter, session } = harness([
+    { tool: 'yuandian_rh_ft_detail', result: observedNotFoundResponse() },
+    {
+      tool: 'yuandian_rh_ft_search',
+      result: mcp({ data: [{ ftid: 'fallback-ft-53', fgmc: '合成法律', ftnum: '第五十三条' }] }),
+    },
+    {
+      tool: 'yuandian_rh_ft_detail',
+      result: articleDetail({ id: 'fallback-ft-53', fgmc: '合成法律', ftnum: '第五十三条' }),
+    },
+  ], { telemetrySink: { record: async (record) => records.push(structuredClone(record)) } })
+  const result = await adapter.retrieve({
+    claimId: 'claim-direct-fallback', kind: 'article_text', text: '合成第五十三条',
+    knownSourceTitle: '合成法律', knownArticleNumber: '第53条',
+  })
+  assert.equal(result.status, 'evidence_found')
+  assert.equal(session.calls.length, 3)
+  assert.deepEqual(session.calls.map((call) => call.request.name), [
+    'yuandian_rh_ft_detail', 'yuandian_rh_ft_search', 'yuandian_rh_ft_detail',
+  ])
+  assert.deepEqual(session.calls[1].request.arguments, {
+    keyword: '合成第五十三条 第53条', fgmc: '合成法律', top_k: KEYWORD_SEARCH_DEFAULT_TOP_K,
+  })
+  assert.deepEqual(session.calls[2].request.arguments, { id: 'fallback-ft-53' })
+  assert.equal(records[0].fallbackTriggered, true)
+  assert.equal(records[0].providerCallCount, 3)
+  assert.equal(records[0].selectedCandidateRank, 1)
+  assert.equal(records[0].detail.detailRecordFound, true)
+  assert.equal(records[0].normalization.finalStatus, 'evidence_found')
+})
+
+test('direct detail provider error never triggers search fallback', async () => {
+  const records = []
+  const { adapter, session } = harness([
+    { tool: 'yuandian_rh_ft_detail', error: { status: 500 } },
+  ], { telemetrySink: { record: async (record) => records.push(structuredClone(record)) } })
+  const result = await adapter.retrieve({
+    claimId: 'claim-direct-provider-error', kind: 'article_text', text: '合成第五十三条',
+    knownSourceTitle: '合成法律', knownArticleNumber: '第53条',
+  })
+  assert.equal(result.status, 'provider_error')
+  assert.equal(session.calls.length, 1)
+  assert.equal(records[0].fallbackTriggered, false)
+  assert.equal(records[0].providerCallCount, 1)
 })
 
 test('historical known article sends refer_date only to direct detail', async () => {

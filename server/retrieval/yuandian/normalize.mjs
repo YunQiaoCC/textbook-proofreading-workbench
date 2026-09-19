@@ -307,6 +307,7 @@ export function detailRecord(payload) {
     const record = legacyDetailRecord(valueAtPath(payload, path))
     if (record) return record
   }
+  if (observedNotFound(payload)) return undefined
   throw unsupportedResponseShape()
 }
 

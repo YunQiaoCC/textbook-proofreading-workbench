@@ -109,6 +109,7 @@ export function createSafeRetrievalTelemetry(claim, recordedAt) {
     routing: {},
     providerCallCount: 0,
     providerCalls: [],
+    fallbackTriggered: false,
     searchCandidates: [],
     selectedCandidateRank: null,
     detail: {
@@ -185,8 +186,9 @@ export function safeDetailTelemetry(record) {
   })
 }
 
-export function recordDetailResponseShape(telemetry, payload) {
-  telemetry.detail.responseShape = safeYuandianPayloadShape(payload)
+export function recordDetailResponseShape(telemetry, payload, field = 'responseShape') {
+  const safeField = field === 'fallbackResponseShape' ? field : 'responseShape'
+  telemetry.detail[safeField] = safeYuandianPayloadShape(payload)
 }
 
 export function finalizeSafeRetrievalTelemetry(telemetry, result, normalized) {
